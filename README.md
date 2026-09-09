@@ -53,7 +53,7 @@ See [benchmark samples, methodology, and reproduction commands](benchmarks/READM
 
 ## Try it
 
-You need macOS, Xcode with an installed iOS Simulator runtime, Rust 1.89 or later, and AXe 1.8.0. The setup script downloads the pinned AXe release and checks its SHA-256. Python 3 is needed for the helper scripts.
+You need macOS, Xcode with an installed iOS Simulator runtime, Rust 1.89 or later, and AXe 1.8.0. The setup script downloads the pinned AXe release and checks its SHA-256. Python 3 is needed for the helper scripts. The installer requires at least 2 GiB of free disk space; simulator runtimes and app builds need additional space.
 
 ```sh
 git clone https://github.com/pol-cova/mx.git
@@ -105,6 +105,14 @@ The server communicates over stdio. Clients discover the full tool catalog throu
 An example task to give your agent:
 
 > Run MxDemo, increment the counter, enter "Hola, José", and verify the greeting. Save screenshots of the initial state and the result.
+
+## Validation status
+
+The automated Rust suite uses fake Xcode and simulator tools for many behavior checks. Those tests verify Mx's logic, but they do not prove that installation or a real app works on a particular Mac.
+
+The published benchmark samples and screenshots come from live MxDemo simulator runs. MxDemo is a small UIKit test app. Compatibility with a larger production app is not established by those results.
+
+The new automatic-discovery installer still needs a completed live end-to-end validation. The first attempt on the development Mac failed during the AXe download with low disk space. See [CONTRIBUTING.md](CONTRIBUTING.md) for the distinction between automated and live checks.
 
 ## Contribute
 
