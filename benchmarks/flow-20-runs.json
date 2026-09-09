@@ -1,0 +1,195 @@
+{
+  "repetitions": 20,
+  "screens_per_run": 3,
+  "median_launch_ms": 235.0,
+  "median_flow_ms": 2630.0,
+  "median_transition_ms": 1397.0,
+  "median_screenshot_ms": 512.5,
+  "p95_launch_ms": 1278,
+  "p95_flow_ms": 3570,
+  "max_flow_ms": 6264,
+  "p95_transition_ms": 1833,
+  "p95_screenshot_ms": 753,
+  "samples": [
+    {
+      "run": 1,
+      "launch_wall_ms": 1671,
+      "launch_reported_ms": 1643,
+      "flow_wall_ms": 6264,
+      "flow_reported_ms": 6217,
+      "transition_ms": 2324,
+      "screenshot_ms": 753
+    },
+    {
+      "run": 2,
+      "launch_wall_ms": 413,
+      "launch_reported_ms": 408,
+      "flow_wall_ms": 2348,
+      "flow_reported_ms": 2340,
+      "transition_ms": 1168,
+      "screenshot_ms": 485
+    },
+    {
+      "run": 3,
+      "launch_wall_ms": 239,
+      "launch_reported_ms": 234,
+      "flow_wall_ms": 3096,
+      "flow_reported_ms": 3089,
+      "transition_ms": 1486,
+      "screenshot_ms": 786
+    },
+    {
+      "run": 4,
+      "launch_wall_ms": 1278,
+      "launch_reported_ms": 1260,
+      "flow_wall_ms": 2601,
+      "flow_reported_ms": 2589,
+      "transition_ms": 1773,
+      "screenshot_ms": 540
+    },
+    {
+      "run": 5,
+      "launch_wall_ms": 314,
+      "launch_reported_ms": 308,
+      "flow_wall_ms": 2285,
+      "flow_reported_ms": 2279,
+      "transition_ms": 1082,
+      "screenshot_ms": 395
+    },
+    {
+      "run": 6,
+      "launch_wall_ms": 207,
+      "launch_reported_ms": 203,
+      "flow_wall_ms": 2249,
+      "flow_reported_ms": 2244,
+      "transition_ms": 1129,
+      "screenshot_ms": 431
+    },
+    {
+      "run": 7,
+      "launch_wall_ms": 207,
+      "launch_reported_ms": 201,
+      "flow_wall_ms": 2471,
+      "flow_reported_ms": 2461,
+      "transition_ms": 1291,
+      "screenshot_ms": 467
+    },
+    {
+      "run": 8,
+      "launch_wall_ms": 208,
+      "launch_reported_ms": 203,
+      "flow_wall_ms": 2505,
+      "flow_reported_ms": 2500,
+      "transition_ms": 1161,
+      "screenshot_ms": 655
+    },
+    {
+      "run": 9,
+      "launch_wall_ms": 197,
+      "launch_reported_ms": 192,
+      "flow_wall_ms": 2244,
+      "flow_reported_ms": 2238,
+      "transition_ms": 1152,
+      "screenshot_ms": 391
+    },
+    {
+      "run": 10,
+      "launch_wall_ms": 217,
+      "launch_reported_ms": 211,
+      "flow_wall_ms": 2366,
+      "flow_reported_ms": 2360,
+      "transition_ms": 1267,
+      "screenshot_ms": 424
+    },
+    {
+      "run": 11,
+      "launch_wall_ms": 199,
+      "launch_reported_ms": 195,
+      "flow_wall_ms": 2646,
+      "flow_reported_ms": 2640,
+      "transition_ms": 1325,
+      "screenshot_ms": 471
+    },
+    {
+      "run": 12,
+      "launch_wall_ms": 212,
+      "launch_reported_ms": 206,
+      "flow_wall_ms": 2435,
+      "flow_reported_ms": 2429,
+      "transition_ms": 1266,
+      "screenshot_ms": 424
+    },
+    {
+      "run": 13,
+      "launch_wall_ms": 214,
+      "launch_reported_ms": 208,
+      "flow_wall_ms": 2614,
+      "flow_reported_ms": 2608,
+      "transition_ms": 1356,
+      "screenshot_ms": 490
+    },
+    {
+      "run": 14,
+      "launch_wall_ms": 216,
+      "launch_reported_ms": 210,
+      "flow_wall_ms": 2898,
+      "flow_reported_ms": 2893,
+      "transition_ms": 1528,
+      "screenshot_ms": 518
+    },
+    {
+      "run": 15,
+      "launch_wall_ms": 232,
+      "launch_reported_ms": 225,
+      "flow_wall_ms": 3270,
+      "flow_reported_ms": 3257,
+      "transition_ms": 1833,
+      "screenshot_ms": 582
+    },
+    {
+      "run": 16,
+      "launch_wall_ms": 293,
+      "launch_reported_ms": 287,
+      "flow_wall_ms": 2879,
+      "flow_reported_ms": 2872,
+      "transition_ms": 1438,
+      "screenshot_ms": 507
+    },
+    {
+      "run": 17,
+      "launch_wall_ms": 278,
+      "launch_reported_ms": 266,
+      "flow_wall_ms": 2951,
+      "flow_reported_ms": 2945,
+      "transition_ms": 1469,
+      "screenshot_ms": 562
+    },
+    {
+      "run": 18,
+      "launch_wall_ms": 238,
+      "launch_reported_ms": 232,
+      "flow_wall_ms": 3188,
+      "flow_reported_ms": 3181,
+      "transition_ms": 1651,
+      "screenshot_ms": 619
+    },
+    {
+      "run": 19,
+      "launch_wall_ms": 291,
+      "launch_reported_ms": 285,
+      "flow_wall_ms": 3108,
+      "flow_reported_ms": 3100,
+      "transition_ms": 1590,
+      "screenshot_ms": 559
+    },
+    {
+      "run": 20,
+      "launch_wall_ms": 294,
+      "launch_reported_ms": 287,
+      "flow_wall_ms": 3570,
+      "flow_reported_ms": 3560,
+      "transition_ms": 1830,
+      "screenshot_ms": 594
+    }
+  ]
+}

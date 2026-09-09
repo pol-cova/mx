@@ -1,0 +1,46 @@
+{
+  "device": "SIMULATOR_UDID",
+  "output_dir": ".mx/demo-flow",
+  "timeout_ms": 10000,
+  "states": [
+    {
+      "name": "initial",
+      "actions": [],
+      "expect_label": "Count: 0"
+    },
+    {
+      "name": "incremented",
+      "actions": [
+        {
+          "action": "tap",
+          "selector": {
+            "identifier": "increment"
+          }
+        }
+      ],
+      "expect_label": "Count: 1"
+    },
+    {
+      "name": "greeted",
+      "actions": [
+        {
+          "action": "tap",
+          "selector": {
+            "identifier": "name"
+          }
+        },
+        {
+          "action": "type",
+          "text": "Mx Flow"
+        },
+        {
+          "action": "tap",
+          "selector": {
+            "identifier": "greet"
+          }
+        }
+      ],
+      "expect_label": "Hello, Mx Flow!"
+    }
+  ]
+}

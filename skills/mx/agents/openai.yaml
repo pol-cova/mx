@@ -1,0 +1,6 @@
+interface:
+  display_name: "Mx"
+  short_description: "Operate and understand iOS apps with Mx"
+  default_prompt: "Use $mx to run this iOS app and capture its verified user journey."
+policy:
+  allow_implicit_invocation: true

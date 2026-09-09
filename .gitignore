@@ -1,0 +1,22 @@
+/target/
+.mx/
+.DS_Store
+__pycache__/
+*.pyc
+
+# Local documentation and agent/editor state
+/docs/
+/.commandcode/
+/.cmd/
+/.codex/
+/.agents/
+/.claude/
+/.cursor/
+/.vscode/
+/.idea/
+/.something/
+.env
+.env.*
+!.env.example
+*.xcuserstate
+xcuserdata/

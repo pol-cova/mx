@@ -1,0 +1,133 @@
+# Mx
+
+**Build, run, and inspect iOS simulator apps from your terminal or AI agent.**
+
+Mx is a Rust command-line tool and [Model Context Protocol](https://modelcontextprotocol.io/) server. It connects an agent to Xcode and the iOS Simulator so it can launch an app, read its interface, tap controls, enter text, collect logs, and capture screenshots.
+
+The goal is a shorter loop between changing code and checking what actually happens on screen. Give agents repeatable access to a running app, with screenshots and assertions you can review.
+
+Mx is an early project, version 0.1.0. It runs locally on macOS and requires Xcode. Simulator memory profiles are experimental.
+
+## What you can do
+
+| Task | What Mx provides |
+| --- | --- |
+| Build and run | Discover Xcode projects, build an app, and reuse the build across simulators. Relaunch an installed app without rebuilding or reinstalling. |
+| Interact with the app | Find controls by accessibility identifier, label, or role. Tap, enter Unicode text, and verify expected labels. |
+| Keep an agent session | Track the running app, read UI changes, reject stale references, and check the foreground app before sending input. |
+| Capture a journey | Run named steps and save full-screen PNGs, semantic UI snapshots, and an HTML viewer. |
+| Debug | Read structured build diagnostics and live logs with cursors. |
+| Run several simulators | Create and clone devices, keep sessions separate, and check a memory budget before booting. |
+| Explore lower memory use | Apply capability-aware service profiles to Mx-owned iOS 26.5 clones, verify changes, and restore them from a journal. |
+
+Use the CLI directly or connect an MCP client to the same operations. Agent skills live in [skills/](skills/), with [`/mx`](skills/mx/SKILL.md) as the entry point.
+
+## Screenshots
+
+Real simulator captures from the included [UIKit demo](examples/MxDemo). Mx verified each expected label before saving its screenshot.
+
+<p>
+  <img src="assets/screenshots/01-initial.png" width="220" alt="Mx Demo at its initial state, showing Count: 0">
+  <img src="assets/screenshots/02-incremented.png" width="220" alt="Mx Demo after tapping Increment, showing Count: 1">
+  <img src="assets/screenshots/03-greeted.png" width="220" alt="Mx Demo after entering Mx Flow and tapping Greet, showing Hello, Mx Flow!">
+</p>
+
+The sequence demonstrates launch, semantic input, label assertions, and screenshot capture. It is a test app, not a separate Mx graphical interface.
+
+## Benchmark results
+
+Local measurements on Apple Silicon with Xcode 26.5, iOS 26.5, and AXe 1.8.0. These are demo results, not guarantees for every app or Mac.
+
+| Measurement | Result | Practical meaning |
+| --- | --- | --- |
+| Installed-app relaunch, 20 runs | **235 ms median** | Restart a session without a build or install. |
+| Three-state capture flow, 20 runs | **2.63 s median**, 3.57 s p95 | Capture three verified screens and write the journey artifacts. Relaunch is timed separately. |
+| Simulator idle footprint, stock → slim | **3,429 → 1,077 MiB**, 68.6% lower | Optional services account for much of the measured idle footprint. |
+| Simulator footprint after restore | **3,465 MiB** | Restoration returned the same simulator to its stock range. |
+
+The slowest flow took 6.26 seconds. Memory results came from two exploratory stock/slim/restored cycles on a 16 GiB host, with ten samples per phase. Footprint sums simulator process accounting; it is not a measurement of unique system RAM saved. Profiles can disable services an app needs, so validate the capabilities your app uses.
+
+Two slim simulators completed concurrent Unicode input and screenshot workflows. Higher fleet density has not been demonstrated on this host.
+
+See [benchmark samples, methodology, and reproduction commands](benchmarks/README.md).
+
+## Try it
+
+You need macOS, Xcode with an installed iOS Simulator runtime, Rust 1.89 or later, and AXe 1.8.0. The setup script downloads the pinned AXe release and checks its SHA-256. Python 3 is needed for the helper scripts.
+
+```sh
+git clone https://github.com/pol-cova/mx.git
+cd mx
+cargo build --release --locked
+sh scripts/setup-axe.sh
+
+export MX_AXE_PATH="$PWD/.mx/tools/axe-1.8.0/axe"
+export MX_STATE_DIR="$PWD/.mx/state"
+export PATH="$PWD/target/release:$PATH"
+
+mx devices
+```
+
+Choose a simulator UDID from that output, then replace `SIMULATOR_UDID` below:
+
+```sh
+mx run --project examples/MxDemo --scheme MxDemo --device SIMULATOR_UDID --inspect-ui
+mx ui --device SIMULATOR_UDID
+mx tap --device SIMULATOR_UDID --id increment
+mx observe --device SIMULATOR_UDID
+mx screenshot --device SIMULATOR_UDID
+```
+
+Use your own project path and scheme to work with your app. `mx --help` lists commands; `mx COMMAND --help` explains an individual command. Keep AXe's bundled frameworks beside its executable.
+
+### Capture a complete flow
+
+Edit the `device` field in [examples/demo-flow.json](examples/demo-flow.json) to match your simulator. Start the demo at its initial state, then capture the journey:
+
+```sh
+mx relaunch --device SIMULATOR_UDID
+mx capture-flow examples/demo-flow.json
+```
+
+The plan taps Increment, enters a name, and taps Greet. Mx saves three PNGs, `flow.json`, and `flow.html` under `.mx/demo-flow/`. Use a fresh output directory for another capture.
+
+### Connect your AI agent
+
+Add this to an MCP client's server configuration, replacing `/absolute/path/to/mx` with your checkout path:
+
+```json
+{
+  "mcpServers": {
+    "mx": {
+      "command": "/absolute/path/to/mx/target/release/mx",
+      "args": ["mcp"],
+      "env": {
+        "MX_AXE_PATH": "/absolute/path/to/mx/.mx/tools/axe-1.8.0/axe",
+        "MX_STATE_DIR": "/absolute/path/to/mx/.mx/state"
+      }
+    }
+  }
+}
+```
+
+The server communicates over stdio. Clients discover the full tool catalog through MCP `tools/list`. Start an app with `mx_run`, or attach to an existing session with `mx_use_session`, before interacting with it.
+
+An example task to give your agent:
+
+> Run MxDemo, increment the counter, enter "Hola, José", and verify the greeting. Save screenshots of the initial state and the result.
+
+## Contribute
+
+Bug reports, reproducible benchmarks, and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md). Useful areas include accessibility edge cases, testing profiles against more apps, and reducing capture latency.
+
+[Open an issue](https://github.com/pol-cova/mx/issues) with your environment, the command you ran, and what happened. Remove private app data from logs and screenshots before sharing them.
+
+## License and credits
+
+Mx's original code is [MIT licensed](LICENSE), copyright 2026 Paul Contreras. You can use, modify, and redistribute it, including commercially, while retaining the required copyright and license notices.
+
+The runtime catalog includes mappings derived from [simslim](https://github.com/MobAI-App/simslim), also under MIT. Its original copyright and license remain in [third-party/mx-runtime-seed/](third-party/mx-runtime-seed/).
+
+Mx uses [AXe](https://github.com/cameroncooke/AXe) for simulator accessibility. AXe 1.8.0 is MIT licensed and downloaded separately. Rust dependencies retain their own licenses. Xcode, Apple SDKs, and simulator runtimes are separate Apple tools and are not distributed here.
+
+See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for attribution and distribution notes.
