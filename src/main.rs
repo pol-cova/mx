@@ -16,6 +16,8 @@ struct Cli {
 enum Commands {
     /// Serve agent tools using MCP over stdin/stdout.
     Mcp,
+    /// Print MCP client configuration using this executable's absolute path.
+    McpConfig,
     /// List persistent app sessions.
     Sessions,
     /// Measure process physical footprint and CPU counters.
@@ -188,6 +190,22 @@ async fn execute(cli: Cli) -> Result<()> {
             device_type,
         } => print(fleet::create(&template, &name, device_type.as_deref()).await?)?,
         Commands::Mcp => mcp::serve().await?,
+        Commands::McpConfig => {
+            let mut server = serde_json::json!({
+                "command": std::env::current_exe()?,
+                "args": ["mcp"]
+            });
+            let mut env = serde_json::Map::new();
+            for key in ["MX_AXE_PATH", "MX_STATE_DIR"] {
+                if let Ok(value) = std::env::var(key) {
+                    env.insert(key.into(), value.into());
+                }
+            }
+            if !env.is_empty() {
+                server["env"] = env.into();
+            }
+            print(serde_json::json!({"mcpServers": {"mx": server}}))?;
+        }
         Commands::Sessions => print(session::list()?)?,
         Commands::Metrics { device } => print(mx::metrics::snapshot(&device).await?)?,
         Commands::Profile { file } => {

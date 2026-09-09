@@ -10,7 +10,7 @@ Copyright 2026 Interlap. Licensed under MIT. The full original [license](third-p
 
 ## AXe
 
-[AXe 1.8.0](https://github.com/cameroncooke/AXe/tree/v1.8.0), copyright 2025 Cameron Cooke, is MIT licensed. A copy of its [license](third-party/axe/LICENSE) is included for attribution. `scripts/setup-axe.sh` downloads AXe separately into ignored local state. This repository does not include the AXe binary or its bundled frameworks. Preserve upstream notices and check the licenses of bundled components if redistributing those artifacts.
+[AXe 1.8.0](https://github.com/cameroncooke/AXe/tree/v1.8.0), copyright 2025 Cameron Cooke, is MIT licensed. A copy of its [license](third-party/axe/LICENSE) is included for attribution. `scripts/setup-axe.sh` downloads AXe separately into `~/Library/Application Support/Mx/tools/`. This repository does not include the AXe binary or its bundled frameworks. Preserve upstream notices and check the licenses of bundled components if redistributing those artifacts.
 
 ## Rust dependencies
 

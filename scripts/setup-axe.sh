@@ -4,8 +4,7 @@ set -eu
 # Pinned upstream release; no Homebrew or system-wide installation is needed.
 version=1.8.0
 checksum=7b76340b72e90d0f211bc7c4636f15009076eff07acef2f2b632b175debd8834
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-destination="$root/.mx/tools/axe-$version"
+destination="$HOME/Library/Application Support/Mx/tools/axe-$version"
 if [ -x "$destination/axe" ]; then
     "$destination/axe" --version
     exit 0
@@ -23,4 +22,4 @@ fi
 mkdir -p "$destination"
 tar -xzf "$archive" -C "$destination"
 "$destination/axe" --version
-printf 'Set MX_AXE_PATH to %s/axe\n' "$destination"
+printf 'AXe installed at %s/axe. Mx discovers it automatically.\n' "$destination"

@@ -41,3 +41,36 @@ fn logs_require_a_numeric_pid() {
         .unwrap();
     assert_eq!(result.status.code(), Some(2));
 }
+
+#[test]
+fn mcp_config_uses_absolute_executable_and_only_explicit_overrides() {
+    let result = Command::new(env!("CARGO_BIN_EXE_mx"))
+        .arg("mcp-config")
+        .env_remove("MX_AXE_PATH")
+        .env_remove("MX_STATE_DIR")
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let config: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    let server = &config["mcpServers"]["mx"];
+    assert!(std::path::Path::new(server["command"].as_str().unwrap()).is_absolute());
+    assert_eq!(server["args"], serde_json::json!(["mcp"]));
+    assert!(server.get("env").is_none());
+
+    let result = Command::new(env!("CARGO_BIN_EXE_mx"))
+        .arg("mcp-config")
+        .env("MX_AXE_PATH", "/custom path/axe")
+        .env("MX_STATE_DIR", "/custom path/state")
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    let config: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(
+        config["mcpServers"]["mx"]["env"]["MX_AXE_PATH"],
+        "/custom path/axe"
+    );
+    assert_eq!(
+        config["mcpServers"]["mx"]["env"]["MX_STATE_DIR"],
+        "/custom path/state"
+    );
+}

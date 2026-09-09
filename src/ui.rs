@@ -56,8 +56,28 @@ impl Selector {
             && self.role.as_ref().is_none_or(|s| &element.role == s)
     }
 }
+fn resolve_bridge(override_path: Option<String>, home: Option<std::path::PathBuf>) -> String {
+    if let Some(path) = override_path {
+        return path;
+    }
+    if let Some(home) = home {
+        let path = home.join("Library/Application Support/Mx/tools/axe-1.8.0/axe");
+        use std::os::unix::fs::PermissionsExt;
+        if path
+            .metadata()
+            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        {
+            return path.to_string_lossy().into_owned();
+        }
+    }
+    "axe".into()
+}
+
 fn bridge() -> String {
-    std::env::var("MX_AXE_PATH").unwrap_or_else(|_| "axe".into())
+    resolve_bridge(
+        std::env::var("MX_AXE_PATH").ok(),
+        std::env::var_os("HOME").map(std::path::PathBuf::from),
+    )
 }
 
 pub(crate) async fn batch_steps(device: &str, steps: &[String]) -> Result<()> {
@@ -121,7 +141,7 @@ pub fn parse_elements(json: &str) -> Result<Vec<Element>> {
 
 pub async fn inspect(device: &str) -> Result<Screen> {
     let raw = process::output(&bridge(), &strings(&["describe-ui", "--udid", device])).await
-        .context("UI inspection requires AXe 1.8 or later on PATH, or MX_AXE_PATH pointing to its executable")?;
+        .context("UI inspection requires AXe. Run sh scripts/setup-axe.sh from the Mx checkout, install AXe on PATH, or set MX_AXE_PATH")?;
     Ok(Screen {
         device: device.into(),
         pid: serde_json::from_str::<Value>(&raw)?
@@ -238,5 +258,33 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod bridge_discovery_tests {
+    use super::resolve_bridge;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn discovers_user_install_without_cwd_or_path_and_preserves_override() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home
+            .path()
+            .join("Library/Application Support/Mx/tools/axe-1.8.0/axe");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(resolve_bridge(None, Some(home.path().into())), "axe");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            resolve_bridge(None, Some(home.path().into())),
+            path.to_str().unwrap()
+        );
+        assert_eq!(
+            resolve_bridge(Some("/custom/axe".into()), Some(home.path().into())),
+            "/custom/axe"
+        );
+        assert_eq!(resolve_bridge(None, None), "axe");
     }
 }

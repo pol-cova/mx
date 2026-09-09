@@ -58,15 +58,12 @@ You need macOS, Xcode with an installed iOS Simulator runtime, Rust 1.89 or late
 ```sh
 git clone https://github.com/pol-cova/mx.git
 cd mx
-cargo build --release --locked
-sh scripts/setup-axe.sh
-
-export MX_AXE_PATH="$PWD/.mx/tools/axe-1.8.0/axe"
-export MX_STATE_DIR="$PWD/.mx/state"
-export PATH="$PWD/target/release:$PATH"
+sh scripts/install.sh
 
 mx devices
 ```
+
+The installer puts `mx` in Cargo's bin directory and AXe in `~/Library/Application Support/Mx/tools/`. Mx discovers AXe and stores sessions automatically. No environment exports are needed. If `mx` is not on your shell's PATH, use the full executable path printed by the installer.
 
 Choose a simulator UDID from that output, then replace `SIMULATOR_UDID` below:
 
@@ -93,22 +90,15 @@ The plan taps Increment, enters a name, and taps Greet. Mx saves three PNGs, `fl
 
 ### Connect your AI agent
 
-Add this to an MCP client's server configuration, replacing `/absolute/path/to/mx` with your checkout path:
+Generate the configuration for your installation:
 
-```json
-{
-  "mcpServers": {
-    "mx": {
-      "command": "/absolute/path/to/mx/target/release/mx",
-      "args": ["mcp"],
-      "env": {
-        "MX_AXE_PATH": "/absolute/path/to/mx/.mx/tools/axe-1.8.0/axe",
-        "MX_STATE_DIR": "/absolute/path/to/mx/.mx/state"
-      }
-    }
-  }
-}
+```sh
+mx mcp-config
 ```
+
+Copy the JSON output into your MCP client's server configuration. It includes the absolute path to your installed executable, so desktop clients do not need your shell's PATH. Mx discovers AXe automatically.
+
+For a custom installation, `MX_AXE_PATH` overrides AXe discovery and `MX_STATE_DIR` overrides session storage. `mx mcp-config` includes those overrides when set. Otherwise, Mx checks its managed AXe installation, then `axe` on PATH.
 
 The server communicates over stdio. Clients discover the full tool catalog through MCP `tools/list`. Start an app with `mx_run`, or attach to an existing session with `mx_use_session`, before interacting with it.
 
