@@ -1,5 +1,5 @@
 {
-  "measured_at": "2026-09-08",
+  "measured_at": "2026-09-09",
   "host_memory_gib": 16,
   "xcode_version": "26.5",
   "ios_version": "26.5",
@@ -7,13 +7,25 @@
   "simulators": 2,
   "profile": "slim",
   "app": "MxDemo",
-  "combined_idle_mib": 2329.229850769043,
-  "combined_active_mib": 2807.0093154907227,
+  "combined_idle_mib": 1840.2168502807617,
+  "combined_idle_min_mib": 1840.0606002807617,
+  "combined_idle_max_mib": 1841.733871459961,
+  "combined_active_mib": 2244.9868392944336,
+  "combined_active_min_mib": 2244.8305892944336,
+  "combined_active_max_mib": 2253.2073516845703,
+  "samples_per_phase": 10,
+  "sample_interval_seconds": 1,
+  "previous_combined_idle_mib": 2329.229850769043,
+  "previous_combined_active_mib": 2807.0093154907227,
   "parallel_workflow_seconds": 11.050711124989903,
-  "swap_before_mib": 1594,
-  "swap_after_mib": 1594,
   "workflows_passed": 2,
   "workflow": "Launch the same prebuilt app on each simulator, enter distinct Unicode text, assert the resulting semantic UI, and capture a screenshot.",
   "memory_method": "Sum proc_pid_rusage physical footprint for every process in each simulator process tree. This is not unique system memory.",
+  "process_findings": {
+    "retained": ["SpringBoard", "MercuryPosterExtension", "backboardd", "AccessibilityUIServer", "WidgetRenderer_Default"],
+    "absent_at_idle": ["Spotlight", "nanotimekitcompaniond"],
+    "active_only": ["InputUI"]
+  },
+  "timing_note": "The current concurrent Unicode workflow passed on both devices. A later clean timing rerun was blocked when the system disk filled while saving session state, so parallel_workflow_seconds retains the prior measured timing.",
   "result": "passed"
 }

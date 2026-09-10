@@ -505,6 +505,56 @@ fn interrupted_profile_restores_only_changes_and_preserves_existing_overrides() 
 }
 
 #[test]
+fn slim_profile_runs_optional_post_boot_cleanup() {
+    let fixture = Fixture::new();
+    let state = fixture.dir.path().join("state");
+    let session_path = state.join("test-device.session.json");
+    let mut session: Value =
+        serde_json::from_slice(&std::fs::read(&session_path).unwrap()).unwrap();
+    session["active"] = false.into();
+    std::fs::write(session_path, serde_json::to_vec(&session).unwrap()).unwrap();
+    std::fs::write(
+        state.join("test-device.owned.json"),
+        r#"{"device":"test-device","source":"source","name":"Mx test"}"#,
+    )
+    .unwrap();
+    let request = fixture.dir.path().join("profile.json");
+    std::fs::write(
+        &request,
+        r#"{"device":"test-device","operation":"apply","preset":"slim"}"#,
+    )
+    .unwrap();
+
+    let output = fixture
+        .command()
+        .env("MX_TEST_BOOTED", "1")
+        .arg("profile")
+        .arg(&request)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let calls = fixture.calls();
+    assert!(calls.iter().any(|call| {
+        call["program"] == "xcrun"
+            && call["args"]
+                == serde_json::json!(["simctl", "terminate", "test-device", "com.apple.Spotlight"])
+    }));
+    assert!(calls.iter().any(|call| {
+        call["program"] == "xcrun"
+            && call["args"].as_array().is_some_and(|args| {
+                args.iter().any(|arg| {
+                    arg.as_str()
+                        .is_some_and(|value| value.contains("com.apple.nanotimekitcompaniond"))
+                })
+            })
+    }));
+}
+
+#[test]
 fn prebuilt_launch_reuses_app_without_invoking_xcode_again() {
     let fixture = Fixture::new();
     let run = fixture

@@ -18,12 +18,16 @@ Footprint sums `proc_pid_rusage` physical footprint for descendants of the simul
 
 The original Python measurement harness has been removed. A future Rust benchmark command must preserve the same sampling method before this result can be reproduced from the public interface.
 
-The published JSON copies omit local identity/path fields; measurement values are unchanged. Demo screenshots are in [assets/screenshots](../assets/screenshots/). No new simulator measurements were taken for this README.
+The published JSON copies omit local identity and path fields. Demo screenshots are in [assets/screenshots](../assets/screenshots/).
 
 ## Two-simulator run
 
 [fleet-validation-summary.json](fleet-validation-summary.json) records the live two-simulator result. Both slim simulators launched the same prebuilt MxDemo app, entered different Unicode text, verified the resulting semantic UI, and saved screenshots.
 
-The two simulators used 2,329.23 MiB combined while idle and 2,807.01 MiB with both apps running. The concurrent workflows finished in 11.051 seconds. Swap stayed at 1,594 MiB.
+The September 9 profile used 1,840.22 MiB combined at idle and 2,244.99 MiB with both apps running, using the median of ten one-second samples. The ranges were 1,840.06–1,841.73 MiB idle and 2,244.83–2,253.21 MiB active. The older run used 2,329.23 MiB idle and 2,807.01 MiB active.
+
+Both simulators completed a concurrent Unicode input and semantic UI verification. A later clean timing rerun could not save session state because the system disk filled during app installation, so the previous 11.051-second timing remains the published workflow timing.
+
+SpringBoard, MercuryPosterExtension, BackBoard, AccessibilityUIServer, and WidgetRenderer remained in the settled process tree. WidgetRenderer respawned after termination and was not added to the profile. Spotlight and NanoTimeKit were absent. InputUI returned after typing and is included in the active samples.
 
 This proves two concurrent simulators on the measured host. It does not establish a higher fleet limit.

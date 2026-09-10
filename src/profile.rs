@@ -57,6 +57,7 @@ const WATCH_USER_AGENTS: &[&str] = &[
     "com.apple.nanoprefsyncd",
     "com.apple.nanoregistryd",
     "com.apple.nanoregistrylaunchd",
+    "com.apple.nanotimekitcompaniond",
 ];
 fn should_trim_watch_agents(keep: &[String]) -> bool {
     !keep.iter().any(|capability| capability == "watch")
@@ -115,7 +116,7 @@ pub fn catalog_summary() -> serde_json::Value {
         "native_findings": [
             {"label":"com.apple.dmd","reason":"Starts device-management policy services in normal app test devices"},
             {"label":"com.apple.remotemanagementd","reason":"Starts a late fan-out of remote-management subscriber XPC processes"},
-            {"label":"watch-user-agents","reason":"Ten optional Watch synchronization agents are removed after boot unless the watch capability is retained"}
+            {"label":"watch-user-agents","reason":"Eleven optional Watch synchronization agents are requested to exit after boot unless the watch capability is retained"}
         ]
     })
 }
@@ -147,7 +148,8 @@ pub async fn status(device: &str) -> Result<serde_json::Value> {
         "profile_receipt": applied,
         "disabled_service_count": disabled,
         "disabled_count_available": selected.state == "Booted",
-        "spotlight_trim_on_fresh_boot": applied
+        "post_boot_cleanup": applied,
+        "post_boot_cleanup_capabilities": ["spotlight", "watch"]
     }))
 }
 fn verify(current: &BTreeSet<String>, labels: &[String], keep: &[String]) -> Result<()> {
@@ -335,6 +337,7 @@ mod tests {
         assert!(!should_trim_spotlight(&["search".into()]));
         assert!(should_trim_watch_agents(&[]));
         assert!(!should_trim_watch_agents(&["watch".into()]));
+        assert!(WATCH_USER_AGENTS.contains(&"com.apple.nanotimekitcompaniond"));
         assert_eq!(plan(&["watch".into()], Preset::Slim).unwrap().len(), 172);
     }
     #[test]
