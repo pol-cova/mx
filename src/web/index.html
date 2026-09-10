@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mx Simulator</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;background:#111;color:#eee;font:14px system-ui;display:grid;place-items:center;min-height:100vh}.shell{display:grid;gap:12px;padding:16px}.bar{display:flex;gap:8px;align-items:center}.bar input{flex:1;padding:8px}.bar button{padding:8px 12px}.screen{max-height:calc(100vh - 84px);max-width:100%;display:block;border-radius:22px;box-shadow:0 8px 40px #000;touch-action:none;user-select:none}.status{color:#aaa}
+</style>
+<div class="shell">
+  <div class="bar"><input id="text" placeholder="Type into focused field"><button id="send">Type</button><span class="status" id="status">Connecting</span></div>
+  <img id="screen" class="screen" src="/stream.mjpg" draggable="false" alt="iOS Simulator">
+</div>
+<script>
+const image=document.querySelector('#screen'), status=document.querySelector('#status');let size={width:390,height:844},start;
+fetch('/api/status').then(r=>r.json()).then(s=>{size=s;status.textContent='Connected'}).catch(()=>status.textContent='Disconnected');
+const point=e=>{const r=image.getBoundingClientRect();return{x:(e.clientX-r.left)*size.width/r.width,y:(e.clientY-r.top)*size.height/r.height}};
+const post=(path,body)=>fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw Error(r.status)}).catch(()=>status.textContent='Input failed');
+image.onpointerdown=e=>{start={...point(e),time:performance.now()};image.setPointerCapture(e.pointerId)};
+image.onpointerup=e=>{if(!start)return;const end=point(e),distance=Math.hypot(end.x-start.x,end.y-start.y);if(distance<8)post('/api/tap',end);else post('/api/swipe',{x1:start.x,y1:start.y,x2:end.x,y2:end.y,duration_ms:Math.max(50,Math.min(5000,performance.now()-start.time))});start=null};
+image.onpointercancel=()=>start=null;
+document.querySelector('#send').onclick=()=>{const input=document.querySelector('#text');post('/api/type',{text:input.value});input.value=''};
+document.querySelector('#text').onkeydown=e=>{if(e.key==='Enter')document.querySelector('#send').click()};
+</script>

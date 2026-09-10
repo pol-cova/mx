@@ -2,7 +2,7 @@ mod mcp;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use mx::{fleet, flow, interaction, process, runtime, session, sim, ui};
+use mx::{fleet, flow, interaction, process, runtime, session, sim, ui, web};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -20,6 +20,19 @@ enum Commands {
     Mcp,
     /// Print MCP client configuration using this executable's absolute path.
     McpConfig,
+    /// Expose an existing Mx simulator through a local browser URL.
+    Web {
+        #[arg(long)]
+        device: String,
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u8).range(1..=30))]
+        fps: u8,
+        #[arg(long, default_value_t = 80, value_parser = clap::value_parser!(u8).range(1..=100))]
+        quality: u8,
+        #[arg(long, default_value_t = 0.75)]
+        scale: f32,
+    },
     /// List persistent app sessions.
     Sessions,
     /// Measure process physical footprint and CPU counters.
@@ -206,6 +219,26 @@ async fn execute(cli: Cli) -> Result<()> {
             device_type,
         } => print(fleet::create(&template, &name, device_type.as_deref()).await?)?,
         Commands::Mcp => mcp::serve().await?,
+        Commands::Web {
+            device,
+            port,
+            fps,
+            quality,
+            scale,
+        } => {
+            let mut server = web::start(
+                &device,
+                web::Options {
+                    port,
+                    fps,
+                    quality,
+                    scale,
+                },
+            )
+            .await?;
+            print(server.result())?;
+            server.wait().await?;
+        }
         Commands::McpConfig => {
             let mut server = serde_json::json!({
                 "command": std::env::current_exe()?,

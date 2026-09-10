@@ -101,7 +101,15 @@ mx screenshot --device SIMULATOR_UDID
 
 Use your own project path and scheme to run another app.
 
-See [the two-minute demo](DEMO.md) for a prepared walkthrough.
+## Open the simulator in a browser
+
+Mx can expose the active simulator through a local browser using the existing AXe installation:
+
+```sh
+mx web --device SIMULATOR_UDID
+```
+
+Open the returned local URL in Cursor or another browser. Mx streams the simulator as MJPEG and maps pointer and keyboard input back through AXe. The server binds to localhost and requires the same active Mx session and foreground app before accepting input.
 
 ## Connect an agent
 

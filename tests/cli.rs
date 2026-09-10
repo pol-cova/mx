@@ -18,6 +18,7 @@ fn help_exposes_implemented_commands() {
         "capture-flow",
         "relaunch",
         "stop",
+        "web",
     ] {
         assert!(help.contains(command));
     }

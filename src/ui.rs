@@ -139,9 +139,35 @@ pub fn parse_elements(json: &str) -> Result<Vec<Element>> {
     Ok(elements)
 }
 
+async fn describe(device: &str) -> Result<String> {
+    process::output(
+        &bridge_path(),
+        &strings(&["describe-ui", "--udid", device]),
+    )
+    .await
+    .context("UI inspection requires AXe. Run sh scripts/setup-axe.sh from the Mx checkout, install AXe on PATH, or set MX_AXE_PATH")
+}
+
+pub async fn dimensions(device: &str) -> Result<(f64, f64)> {
+    let raw: Value = serde_json::from_str(&describe(device).await?)?;
+    let frame = raw
+        .as_array()
+        .and_then(|roots| roots.first())
+        .and_then(|root| root.get("frame"))
+        .context("AXe UI root has no frame")?;
+    let width = frame["width"].as_f64().context("AXe frame has no width")?;
+    let height = frame["height"]
+        .as_f64()
+        .context("AXe frame has no height")?;
+    anyhow::ensure!(
+        width > 0.0 && height > 0.0,
+        "AXe returned invalid screen dimensions"
+    );
+    Ok((width, height))
+}
+
 pub async fn inspect(device: &str) -> Result<Screen> {
-    let raw = process::output(&bridge_path(), &strings(&["describe-ui", "--udid", device])).await
-        .context("UI inspection requires AXe. Run sh scripts/setup-axe.sh from the Mx checkout, install AXe on PATH, or set MX_AXE_PATH")?;
+    let raw = describe(device).await?;
     Ok(Screen {
         device: device.into(),
         pid: serde_json::from_str::<Value>(&raw)?

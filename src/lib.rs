@@ -11,4 +11,5 @@ pub mod runtime;
 pub mod session;
 pub mod sim;
 pub mod ui;
+pub mod web;
 pub mod xcode;
