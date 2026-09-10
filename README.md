@@ -4,9 +4,9 @@ Mx lets an AI agent build, run, inspect, and control iOS apps in the Simulator.
 
 It is a Rust CLI and MCP server for macOS. Mx uses Xcode, CoreSimulator, and the accessibility tree. An agent can build an app, tap controls by label or identifier, enter text, read logs, verify UI state, and save screenshots.
 
-Mx is at version 0.1.0. The core workflow works on a real SwiftUI project. Fleet profiling is experimental and has only been measured on the machine described below.
+Mx is at version 0.1.0. It has been tested with MxDemo and Aroli, a SwiftUI app with iPhone and Watch targets. Fleet profiles are experimental. The numbers below came from one Mac.
 
-## Measured results
+## Benchmarks
 
 Tests ran on a 16 GiB Apple Silicon Mac with Xcode 26.5, iOS 26.5, and AXe 1.8.0.
 
@@ -22,7 +22,7 @@ Tests ran on a 16 GiB Apple Silicon Mac with Xcode 26.5, iOS 26.5, and AXe 1.8.0
 | Two simulators with apps running | 2,245 MiB combined median | 10 samples; 2,245–2,253 MiB |
 | Concurrent app workflow | 11.05 s | Unicode input and screenshots on both simulators |
 
-The latest single-simulator run met the 800–850 MiB idle goal. The keyboard-active Aroli sample was lower because foregrounding the app changed the running process mix. It is a separate state, not an estimate derived from the idle result.
+The latest single-simulator run reached the 800–850 MiB idle goal. The keyboard-active Aroli sample was lower because foregrounding the app changed the running process mix.
 
 The earlier process cleanup lowered the two-simulator medians from 2,329 to 1,840 MiB idle and from 2,807 to 2,245 MiB with both demo apps running. That is about 21% and 20% lower than the older fleet run. Mx stopped both simulators afterward.
 
@@ -30,21 +30,19 @@ The memory number is the summed physical footprint of each simulator's process t
 
 SpringBoard, the wallpaper extension, BackBoard, and the accessibility server remain because the simulator and semantic UI control need them. The widget renderer restarted after termination, so Mx leaves it alone. The slim profile removes optional Spotlight, Watch, health, and device-management agents. It also stops idle audio and Metal compiler helpers after boot; those helpers restart when needed. InputUI returned for the Aroli keyboard test and is included in the active result.
 
-Two concurrent simulators are proven on this host. More are not. A six-device attempt stopped during device creation because the disk filled up, so it does not count as a concurrency result. Mx can enforce a memory budget before booting another simulator, but that does not prove the machine can run the requested fleet.
+The fleet run covered two concurrent simulators. A six-device run ended during device creation when the disk filled, so capacity beyond two is unmeasured. Mx checks memory before booting another simulator.
 
 The raw flow and memory samples are in [benchmarks](benchmarks/README.md).
 
-## Real app test
+## Aroli
 
-Mx also ran against Aroli, a separate SwiftUI app with package dependencies and iPhone and Watch targets.
+Mx also ran against Aroli, a SwiftUI project with package dependencies and iPhone and Watch targets.
 
-Mx discovered the Xcode project, built the `Aroli` scheme, booted an iPhone 17 Pro simulator, installed the app, and launched it. It then read the live accessibility tree, entered a name, tapped `Continue` by label and role, and verified that onboarding moved from step 1 to step 2.
+It discovered the Xcode project, built the `Aroli` scheme, booted an iPhone 17 Pro simulator, installed the app, and launched it. Mx read the accessibility tree, entered a name, tapped `Continue` by label and role, and checked that onboarding moved from step 1 to step 2.
 
-The first run took 46.0 seconds. The build took 22.5 seconds and the simulator boot took 9.3 seconds. This was a functional test on one simulator, not a concurrency benchmark. Mx also returned four Swift concurrency warnings from the Aroli build as structured diagnostics.
+The first run took 46.0 seconds. The build took 22.5 seconds and the simulator boot took 9.3 seconds. Mx returned four Swift concurrency warnings from the build as structured diagnostics.
 
-<img src="assets/screenshots/aroli-real-validation.png" width="280" alt="Aroli onboarding step 2 after Mx entered a name and tapped Continue">
-
-The full record is in [REAL_WORLD_VALIDATION.md](REAL_WORLD_VALIDATION.md).
+<img src="assets/screenshots/aroli.png" width="280" alt="Aroli onboarding step 2 after Mx entered a name and tapped Continue">
 
 ## What Mx does
 
@@ -119,9 +117,9 @@ The agent can then make a request such as:
 
 The [`/mx`](skills/mx/SKILL.md) skill gives an agent instructions for app work, flow capture, diagnostics, and simulator performance.
 
-## Test status
+## Tests
 
-The repository has 61 passing Rust tests. Many use controlled Rust test executables in place of Xcode and AXe so error and concurrency cases remain repeatable. Those tests check Mx logic. They are separate from the live MxDemo and Aroli runs described above.
+The repository has 61 passing Rust tests. Test executables stand in for Xcode and AXe where a test needs repeatable errors, cancellation, or concurrent requests. The benchmark table and Aroli run use CoreSimulator and AXe.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change.
 

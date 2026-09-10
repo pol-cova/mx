@@ -26,6 +26,6 @@
     "absent_at_idle": ["Spotlight", "nanotimekitcompaniond"],
     "active_only": ["InputUI"]
   },
-  "timing_note": "The current concurrent Unicode workflow passed on both devices. A later clean timing rerun was blocked when the system disk filled while saving session state, so parallel_workflow_seconds retains the prior measured timing.",
+  "timing_note": "Both devices completed the Unicode workflow. The 11.051-second timing comes from the earlier run because the system disk filled while saving the later session.",
   "result": "passed"
 }

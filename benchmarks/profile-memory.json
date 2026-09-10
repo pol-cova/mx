@@ -23,6 +23,6 @@
     "min_mib": 812.1870803833008,
     "max_mib": 813.6258392333984
   },
-  "functional_check": "Mx launched com.paulcontre.Aroli, entered text, tapped Continue by accessibility label and role, verified the next onboarding screen, returned to the name field, and confirmed InputUI and kbd were present.",
+  "functional_check": "Mx launched com.paulcontre.Aroli, entered text, tapped Continue by accessibility label and role, found the next onboarding screen, returned to the name field, and found InputUI and kbd.",
   "result": "passed"
 }
