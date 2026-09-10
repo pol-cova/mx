@@ -1,6 +1,6 @@
 # Benchmark evidence
 
-These are local exploratory measurements from September 8–9, 2026, using MxDemo on Apple Silicon, Xcode 26.5, iOS 26.5, and AXe 1.8.0. The memory experiment used a 16 GiB Mac with other applications running and existing swap use. They do not establish an app compatibility guarantee or a fleet capacity limit.
+These are local exploratory measurements from September 8 and 9, 2026, using MxDemo on Apple Silicon, Xcode 26.5, iOS 26.5, and AXe 1.8.0. The memory experiment used a 16 GiB Mac with other applications running and existing swap use. They do not establish an app compatibility guarantee or a fleet capacity limit.
 
 ## Capture flow
 
@@ -19,3 +19,11 @@ Footprint sums `proc_pid_rusage` physical footprint for descendants of the simul
 The original Python measurement harness has been removed. A future Rust benchmark command must preserve the same sampling method before this result can be reproduced from the public interface.
 
 The published JSON copies omit local identity/path fields; measurement values are unchanged. Demo screenshots are in [assets/screenshots](../assets/screenshots/). No new simulator measurements were taken for this README.
+
+## Two-simulator run
+
+[fleet-validation-summary.json](fleet-validation-summary.json) records the live two-simulator result. Both slim simulators launched the same prebuilt MxDemo app, entered different Unicode text, verified the resulting semantic UI, and saved screenshots.
+
+The two simulators used 2,329.23 MiB combined while idle and 2,807.01 MiB with both apps running. The concurrent workflows finished in 11.051 seconds. Swap stayed at 1,594 MiB.
+
+This proves two concurrent simulators on the measured host. It does not establish a higher fleet limit.

@@ -1,0 +1,19 @@
+{
+  "measured_at": "2026-09-08",
+  "host_memory_gib": 16,
+  "xcode_version": "26.5",
+  "ios_version": "26.5",
+  "axe_version": "1.8.0",
+  "simulators": 2,
+  "profile": "slim",
+  "app": "MxDemo",
+  "combined_idle_mib": 2329.229850769043,
+  "combined_active_mib": 2807.0093154907227,
+  "parallel_workflow_seconds": 11.050711124989903,
+  "swap_before_mib": 1594,
+  "swap_after_mib": 1594,
+  "workflows_passed": 2,
+  "workflow": "Launch the same prebuilt app on each simulator, enter distinct Unicode text, assert the resulting semantic UI, and capture a screenshot.",
+  "memory_method": "Sum proc_pid_rusage physical footprint for every process in each simulator process tree. This is not unique system memory.",
+  "result": "passed"
+}
