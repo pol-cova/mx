@@ -1,4 +1,4 @@
-use crate::{engine, fleet, process, session, sim};
+use crate::{engine, fleet, metrics, process, session, sim};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -55,9 +55,19 @@ const WATCH_USER_AGENTS: &[&str] = &[
     "com.apple.companionappd",
     "com.apple.eventkitsyncd",
     "com.apple.nanoprefsyncd",
+    "com.apple.nanoprefsyncd.2",
     "com.apple.nanoregistryd",
     "com.apple.nanoregistrylaunchd",
     "com.apple.nanotimekitcompaniond",
+    "com.apple.nanoappregistryd",
+    "com.apple.nanomapscd",
+];
+const TRANSIENT_HELPERS: &[&str] = &[
+    "MauiAUSP",
+    "SiriAUSP",
+    "MacinTalkAUSP",
+    "KonaSynthesizer",
+    "MTLCompilerService",
 ];
 fn should_trim_watch_agents(keep: &[String]) -> bool {
     !keep.iter().any(|capability| capability == "watch")
@@ -70,10 +80,8 @@ pub async fn trim_after_boot(device: &str) -> Result<Vec<String>> {
     let receipt: Receipt = serde_json::from_slice(&std::fs::read(path)?)?;
     let trim_spotlight = should_trim_spotlight(&receipt.keep);
     let trim_watch = should_trim_watch_agents(&receipt.keep);
-    if !trim_spotlight && !trim_watch {
-        return Ok(Vec::new());
-    }
-    if std::env::var_os("MX_TEST_ROOT").is_none() {
+    let live = std::env::var_os("MX_TEST_ROOT").is_none();
+    if live {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
     let mut trimmed = Vec::new();
@@ -90,6 +98,35 @@ pub async fn trim_after_boot(device: &str) -> Result<Vec<String>> {
         engine::transaction::bootout_user_agents(device, WATCH_USER_AGENTS).await?;
         trimmed.push("watch-user-agents".into());
     }
+    let mut optional_agents = Vec::new();
+    if !receipt
+        .keep
+        .iter()
+        .any(|capability| matches!(capability.as_str(), "siri" | "health"))
+    {
+        optional_agents.push("com.apple.biomed");
+    }
+    if !receipt
+        .keep
+        .iter()
+        .any(|capability| capability == "device-management")
+    {
+        optional_agents.push("com.apple.managedconfiguration.profiled");
+    }
+    if !optional_agents.is_empty() {
+        engine::transaction::bootout_user_agents(device, &optional_agents).await?;
+        trimmed.extend(optional_agents.into_iter().map(String::from));
+    }
+    if live {
+        for pass in 0..2 {
+            trimmed.extend(metrics::terminate_named(device, TRANSIENT_HELPERS).await?);
+            if pass == 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            }
+        }
+    }
+    trimmed.sort();
+    trimmed.dedup();
     Ok(trimmed)
 }
 fn write(receipt: &Receipt) -> Result<()> {
@@ -116,7 +153,10 @@ pub fn catalog_summary() -> serde_json::Value {
         "native_findings": [
             {"label":"com.apple.dmd","reason":"Starts device-management policy services in normal app test devices"},
             {"label":"com.apple.remotemanagementd","reason":"Starts a late fan-out of remote-management subscriber XPC processes"},
-            {"label":"watch-user-agents","reason":"Eleven optional Watch synchronization agents are requested to exit after boot unless the watch capability is retained"}
+            {"label":"watch-user-agents","reason":"Optional Watch synchronization agents exit after boot unless the watch capability is retained"},
+            {"label":"transient-helpers","reason":"Idle audio and Metal compiler helpers exit after boot and restart on demand"},
+            {"label":"com.apple.biomed","reason":"Exits unless Siri or Health support is retained"},
+            {"label":"com.apple.managedconfiguration.profiled","reason":"Exits unless device-management support is retained"}
         ]
     })
 }
@@ -149,7 +189,7 @@ pub async fn status(device: &str) -> Result<serde_json::Value> {
         "disabled_service_count": disabled,
         "disabled_count_available": selected.state == "Booted",
         "post_boot_cleanup": applied,
-        "post_boot_cleanup_capabilities": ["spotlight", "watch"]
+        "post_boot_cleanup_capabilities": ["spotlight", "watch", "siri", "health", "device-management"]
     }))
 }
 fn verify(current: &BTreeSet<String>, labels: &[String], keep: &[String]) -> Result<()> {
@@ -338,6 +378,8 @@ mod tests {
         assert!(should_trim_watch_agents(&[]));
         assert!(!should_trim_watch_agents(&["watch".into()]));
         assert!(WATCH_USER_AGENTS.contains(&"com.apple.nanotimekitcompaniond"));
+        assert!(WATCH_USER_AGENTS.contains(&"com.apple.nanoappregistryd"));
+        assert!(WATCH_USER_AGENTS.contains(&"com.apple.nanomapscd"));
         assert_eq!(plan(&["watch".into()], Preset::Slim).unwrap().len(), 172);
     }
     #[test]

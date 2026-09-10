@@ -16,15 +16,19 @@ Tests ran on a 16 GiB Apple Silicon Mac with Xcode 26.5, iOS 26.5, and AXe 1.8.0
 | Capture three verified screens | 2.63 s median, 3.57 s p95 | 20 MxDemo runs |
 | Slim simulator idle memory | 3,429 MiB to 1,077 MiB | Two stock, slim, and restore cycles |
 | Restore simulator profile | 3,465 MiB after restore | Returned to the stock range |
+| Current slim simulator idle | 832 MiB median | 10 samples; 832–843 MiB |
+| Aroli with keyboard visible | 812 MiB median | 10 samples; 812–814 MiB |
 | Two simulators idle | 1,840 MiB combined median | 10 samples; 1,840–1,842 MiB |
 | Two simulators with apps running | 2,245 MiB combined median | 10 samples; 2,245–2,253 MiB |
 | Concurrent app workflow | 11.05 s | Unicode input and screenshots on both simulators |
 
-The latest process cleanup lowered the two-simulator medians from 2,329 to 1,840 MiB idle and from 2,807 to 2,245 MiB with both demo apps running. That is about 21% and 20% lower than the older fleet run. Mx stopped both simulators afterward.
+The latest single-simulator run met the 800–850 MiB idle goal. The keyboard-active Aroli sample was lower because foregrounding the app changed the running process mix. It is a separate state, not an estimate derived from the idle result.
+
+The earlier process cleanup lowered the two-simulator medians from 2,329 to 1,840 MiB idle and from 2,807 to 2,245 MiB with both demo apps running. That is about 21% and 20% lower than the older fleet run. Mx stopped both simulators afterward.
 
 The memory number is the summed physical footprint of each simulator's process tree. It is useful for comparing the same machine and workload. It is not the amount of unique system RAM saved.
 
-SpringBoard, the wallpaper extension, BackBoard, and the accessibility server remain because the simulator and semantic UI control need them. The widget renderer restarted after termination, so Mx leaves it alone. Spotlight and optional Watch helpers can stay down; the current profile also removes NanoTimeKit. InputUI returns after typing and is included in the active result.
+SpringBoard, the wallpaper extension, BackBoard, and the accessibility server remain because the simulator and semantic UI control need them. The widget renderer restarted after termination, so Mx leaves it alone. The slim profile removes optional Spotlight, Watch, health, and device-management agents. It also stops idle audio and Metal compiler helpers after boot; those helpers restart when needed. InputUI returned for the Aroli keyboard test and is included in the active result.
 
 Two concurrent simulators are proven on this host. More are not. A six-device attempt stopped during device creation because the disk filled up, so it does not count as a concurrency result. Mx can enforce a memory budget before booting another simulator, but that does not prove the machine can run the requested fleet.
 

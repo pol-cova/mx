@@ -547,8 +547,24 @@ fn slim_profile_runs_optional_post_boot_cleanup() {
         call["program"] == "xcrun"
             && call["args"].as_array().is_some_and(|args| {
                 args.iter().any(|arg| {
-                    arg.as_str()
-                        .is_some_and(|value| value.contains("com.apple.nanotimekitcompaniond"))
+                    arg.as_str().is_some_and(|value| {
+                        value.contains("com.apple.nanotimekitcompaniond")
+                            && value.contains("com.apple.nanoappregistryd")
+                            && value.contains("com.apple.nanomapscd")
+                            && value.contains("com.apple.nanoprefsyncd.2")
+                            && !value.contains(") &")
+                    })
+                })
+            })
+    }));
+    assert!(calls.iter().any(|call| {
+        call["program"] == "xcrun"
+            && call["args"].as_array().is_some_and(|args| {
+                args.iter().any(|arg| {
+                    arg.as_str().is_some_and(|value| {
+                        value.contains("com.apple.biomed")
+                            && value.contains("com.apple.managedconfiguration.profiled")
+                    })
                 })
             })
     }));

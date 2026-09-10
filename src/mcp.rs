@@ -595,7 +595,7 @@ impl Server {
         cancellable(context, mx::profile::status(&r.device)).await
     }
     #[tool(
-        description = "Plan, apply, verify, or restore an experimental capability profile on an Mx-owned iOS 26.5 clone. Apply/restore require a stopped app session and reboot the clone. Slim preset disables 172 audited services minus keep categories/capabilities, then requests eleven optional Watch synchronization agents to exit unless Watch support is retained. Balanced disables 11. Networking and core services are retained."
+        description = "Plan, apply, verify, or restore an experimental capability profile on an Mx-owned iOS 26.5 clone. Apply/restore require a stopped app session and reboot the clone. Slim preset disables 172 audited services minus keep categories/capabilities, then exits thirteen optional Watch synchronization agents unless Watch support is retained. Balanced disables 11. Networking and core services are retained."
     )]
     async fn mx_profile(
         &self,

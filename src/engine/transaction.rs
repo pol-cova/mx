@@ -88,14 +88,12 @@ pub async fn bootout_user_agents(device: &str, labels: &[&str]) -> Result<()> {
     if labels.is_empty() {
         return Ok(());
     }
-    let mut script = String::from("set -u\npids=''\nfor label in");
+    let mut script = String::from("set -u\nfor label in");
     for label in labels {
         script.push(' ');
         script.push_str(label);
     }
-    script.push_str(
-        "; do\n  (DYLD_ROOT_PATH=\"$SIMULATOR_ROOT\" \"$SIMULATOR_ROOT/bin/launchctl\" bootout \"user/501/$label\" >/dev/null 2>&1 || true) &\n  pids=\"$pids $!\"\ndone\nfor pid in $pids; do wait \"$pid\"; done\n",
-    );
+    script.push_str("; do\n  DYLD_ROOT_PATH=\"$SIMULATOR_ROOT\" \"$SIMULATOR_ROOT/bin/launchctl\" bootout \"user/501/$label\" >/dev/null 2>&1 || true\ndone\n");
     sim::call(&["spawn", device, "/bin/sh", "-c", &script])
         .await
         .context("Could not trim optional user agents")?;

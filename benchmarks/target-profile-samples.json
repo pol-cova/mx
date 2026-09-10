@@ -1,0 +1,28 @@
+{
+  "measured_at": "2026-09-09",
+  "host_memory_gib": 16,
+  "xcode_version": "26.5",
+  "ios_version": "26.5",
+  "profile": "slim",
+  "simulator": "Mx-owned iPhone 17 Pro clone",
+  "app": "Aroli",
+  "samples_per_state": 10,
+  "sample_interval_seconds": 1,
+  "memory_method": "Sum proc_pid_rusage physical footprint for every process in the simulator process tree. This is not unique system memory.",
+  "idle": {
+    "bytes": [872468872, 872550792, 872534408, 872616328, 872468872, 872468872, 874894808, 883906848, 883726624, 883480864],
+    "process_counts": [51, 51, 51, 51, 51, 51, 52, 52, 52, 52],
+    "median_mib": 832.160530090332,
+    "min_mib": 832.051155090332,
+    "max_mib": 842.9592590332031
+  },
+  "keyboard_active": {
+    "bytes": [851770952, 851689032, 853148528, 851738184, 851738184, 851689032, 851689032, 851656264, 851639880, 851639880],
+    "process_counts": [40, 40, 41, 40, 40, 40, 40, 40, 40, 40],
+    "median_mib": 812.2339553833008,
+    "min_mib": 812.1870803833008,
+    "max_mib": 813.6258392333984
+  },
+  "functional_check": "Mx launched com.paulcontre.Aroli, entered text, tapped Continue by accessibility label and role, verified the next onboarding screen, returned to the name field, and confirmed InputUI and kbd were present.",
+  "result": "passed"
+}

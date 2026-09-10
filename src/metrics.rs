@@ -55,8 +55,12 @@ pub fn usage(pid: u32) -> Option<Usage> {
         lifetime_peak_physical_bytes: info.ri_lifetime_max_phys_footprint,
     })
 }
-pub async fn snapshot(device: &str) -> Result<serde_json::Value> {
+async fn simulator_processes(device: &str) -> Result<(String, Vec<Usage>)> {
     let device = runtime::booted_device(device).await?;
+    let processes = process_tree(&device.udid).await?;
+    Ok((device.udid, processes))
+}
+async fn process_tree(device: &str) -> Result<Vec<Usage>> {
     let output = process::output(
         "/bin/ps",
         &process::strings(&["-axo", "pid=,ppid=,command="]),
@@ -73,7 +77,7 @@ pub async fn snapshot(device: &str) -> Result<serde_json::Value> {
             continue;
         };
         parents.insert(pid, parent);
-        if words.next() == Some("launchd_sim") && line.contains(&device.udid) {
+        if words.next() == Some("launchd_sim") && line.contains(device) {
             root = Some(pid);
         }
     }
@@ -92,10 +96,35 @@ pub async fn snapshot(device: &str) -> Result<serde_json::Value> {
     }
     let mut processes: Vec<_> = pids.into_iter().filter_map(usage).collect();
     processes.sort_by_key(|p| std::cmp::Reverse(p.physical_bytes));
+    Ok(processes)
+}
+pub async fn snapshot(device: &str) -> Result<serde_json::Value> {
+    let (device, processes) = simulator_processes(device).await?;
     Ok(
-        serde_json::json!({"mx":usage(std::process::id()),"device":device.udid,"simulator_physical_bytes":processes.iter().map(|p|p.physical_bytes).sum::<u64>(),
+        serde_json::json!({"mx":usage(std::process::id()),"device":device,"simulator_physical_bytes":processes.iter().map(|p|p.physical_bytes).sum::<u64>(),
         "simulator_process_count":processes.len(),"processes":processes,"measurement":"proc_pid_rusage v4 physical footprint; sum of per-process accounting, not unique system memory"}),
     )
+}
+pub(crate) async fn terminate_named(device: &str, names: &[&str]) -> Result<Vec<String>> {
+    let processes = process_tree(device).await?;
+    let mut terminated = Vec::new();
+    for process in processes
+        .into_iter()
+        .filter(|process| names.contains(&process.name.as_str()))
+    {
+        // SAFETY: the PID belongs to the selected simulator process tree observed immediately
+        // above. A failed signal is handled without widening the target selection.
+        let status = unsafe { libc::kill(process.pid as i32, libc::SIGTERM) };
+        if status == 0 {
+            terminated.push(process.name);
+        } else {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(error).context("Could not trim simulator helper");
+            }
+        }
+    }
+    Ok(terminated)
 }
 pub async fn top(device: &str, limit: usize) -> Result<serde_json::Value> {
     anyhow::ensure!((1..=100).contains(&limit), "limit must be 1..100");

@@ -20,6 +20,16 @@ The original Python measurement harness has been removed. A future Rust benchmar
 
 The published JSON copies omit local identity and path fields. Demo screenshots are in [assets/screenshots](../assets/screenshots/).
 
+## Current profile target
+
+[target-profile-samples.json](target-profile-samples.json) contains the ten live samples for each state from the final September 9 profile. The idle median was 832.16 MiB, with an 832.05–842.96 MiB range. This met the 800–850 MiB idle goal.
+
+Mx then launched the real Aroli app, moved through onboarding with semantic controls, returned to the name field, and measured while the software keyboard was visible. The median was 812.23 MiB, with an 812.19–813.63 MiB range. The active value is lower because foregrounding Aroli changed the simulator process mix; it is an independently sampled state rather than a projection from idle memory.
+
+The fix makes post-boot user-agent removal sequential so `launchctl` does not race itself. The slim profile now waits for late Watch agents, removes optional health and device-management agents, and gives idle audio and Metal compiler helpers a second cleanup pass. The helpers restart on demand.
+
+SpringBoard, MercuryPosterExtension, BackBoard, AccessibilityUIServer, and WidgetRenderer remain. WidgetRenderer and MercuryPosterExtension respawned when removed, and the retained services are required for a usable simulator or semantic UI control. Persistent `launchctl disable` overrides were rejected because they prevented a healthy boot.
+
 ## Two-simulator run
 
 [fleet-validation-summary.json](fleet-validation-summary.json) records the live two-simulator result. Both slim simulators launched the same prebuilt MxDemo app, entered different Unicode text, verified the resulting semantic UI, and saved screenshots.
