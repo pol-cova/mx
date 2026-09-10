@@ -101,6 +101,8 @@ mx screenshot --device SIMULATOR_UDID
 
 Use your own project path and scheme to run another app.
 
+See [the two-minute demo](DEMO.md) for a prepared walkthrough.
+
 ## Connect an agent
 
 Generate the MCP configuration for the installed executable:
