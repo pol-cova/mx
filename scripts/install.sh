@@ -10,6 +10,7 @@ command -v cargo >/dev/null 2>&1 || {
     exit 1
 }
 xcrun --find simctl >/dev/null
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 home_available_kib=$(df -Pk "$HOME" | awk 'END {print $4}')
 if [ "$home_available_kib" -lt 102400 ]; then
     echo 'Mx installation needs at least 100 MiB free in your home directory.' >&2
@@ -26,7 +27,6 @@ if [ "$build_available_kib" -lt 2097152 ]; then
     echo 'Set CARGO_TARGET_DIR to a path on a larger volume and retry.' >&2
     exit 1
 fi
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 sh "$root/scripts/setup-axe.sh"
 printf 'Building and installing Mx...\n'
 cargo install --path "$root" --locked --root "${CARGO_HOME:-$HOME/.cargo}"
