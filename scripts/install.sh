@@ -10,9 +10,20 @@ command -v cargo >/dev/null 2>&1 || {
     exit 1
 }
 xcrun --find simctl >/dev/null
-available_kib=$(df -Pk "$HOME" | awk 'END {print $4}')
-if [ "$available_kib" -lt 2097152 ]; then
-    echo 'Mx installation needs at least 2 GiB free for downloads and build output. Free disk space and retry.' >&2
+home_available_kib=$(df -Pk "$HOME" | awk 'END {print $4}')
+if [ "$home_available_kib" -lt 102400 ]; then
+    echo 'Mx installation needs at least 100 MiB free in your home directory.' >&2
+    exit 1
+fi
+build_path=${CARGO_TARGET_DIR:-$root/target}
+build_parent=$build_path
+while [ ! -e "$build_parent" ]; do
+    build_parent=$(dirname "$build_parent")
+done
+build_available_kib=$(df -Pk "$build_parent" | awk 'END {print $4}')
+if [ "$build_available_kib" -lt 2097152 ]; then
+    echo 'Mx installation needs at least 2 GiB free on the build volume.' >&2
+    echo 'Set CARGO_TARGET_DIR to a path on a larger volume and retry.' >&2
     exit 1
 fi
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)

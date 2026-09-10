@@ -6,8 +6,7 @@ The narrower skills remain available when a request matches only one operation:
 
 - `skills/mx-quick-screenshot/SKILL.md` for one-off simulator screenshots.
 - `skills/mx-capture-flow/SKILL.md` for named screenshot sequences, bug evidence, or before-and-after captures.
-- `skills/mx-demo/SKILL.md` for demo preparation and readiness checks.
 
-Read the selected file before acting. Do not load all three for a simple capture.
+Read the selected file before acting. Do not load both for a simple capture.
 
 Prefer Mx semantic UI tools over coordinates or generic computer control. Screenshots are the fallback for missing semantics and the proof artifact for visual tasks.

@@ -1,5 +1,19 @@
-use std::{os::unix::fs::PermissionsExt, path::PathBuf};
+use std::{path::PathBuf, sync::OnceLock};
 use tempfile::TempDir;
+
+fn fake_tool() -> &'static PathBuf {
+    static TOOL: OnceLock<PathBuf> = OnceLock::new();
+    TOOL.get_or_init(|| {
+        let path = std::env::temp_dir().join(format!("mx-test-tool-{}", std::process::id()));
+        let status = std::process::Command::new("rustc")
+            .args(["--edition=2024", "tests/common/tool.rs", "-o"])
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(status.success(), "failed to compile Rust test fixture");
+        path
+    })
+}
 
 pub struct Fixture {
     pub dir: TempDir,
@@ -14,8 +28,7 @@ impl Fixture {
         std::fs::create_dir(&bin).unwrap();
         for name in ["xcrun", "xcodebuild", "axe"] {
             let path = bin.join(name);
-            std::fs::write(&path, include_str!("tool.py")).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::copy(fake_tool(), &path).unwrap();
         }
         let state = dir.path().join("state");
         std::fs::create_dir(&state).unwrap();

@@ -9,6 +9,7 @@ fn help_exposes_implemented_commands() {
     assert!(result.status.success());
     let help = String::from_utf8(result.stdout).unwrap();
     for command in [
+        "doctor",
         "devices",
         "inspect",
         "run",

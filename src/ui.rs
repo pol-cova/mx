@@ -73,7 +73,7 @@ fn resolve_bridge(override_path: Option<String>, home: Option<std::path::PathBuf
     "axe".into()
 }
 
-fn bridge() -> String {
+pub fn bridge_path() -> String {
     resolve_bridge(
         std::env::var("MX_AXE_PATH").ok(),
         std::env::var_os("HOME").map(std::path::PathBuf::from),
@@ -86,7 +86,7 @@ pub(crate) async fn batch_steps(device: &str, steps: &[String]) -> Result<()> {
         args.push("--step".into());
         args.push(step.clone());
     }
-    process::output(&bridge(), &args).await?;
+    process::output(&bridge_path(), &args).await?;
     Ok(())
 }
 fn scalar(value: &Value) -> Option<String> {
@@ -140,7 +140,7 @@ pub fn parse_elements(json: &str) -> Result<Vec<Element>> {
 }
 
 pub async fn inspect(device: &str) -> Result<Screen> {
-    let raw = process::output(&bridge(), &strings(&["describe-ui", "--udid", device])).await
+    let raw = process::output(&bridge_path(), &strings(&["describe-ui", "--udid", device])).await
         .context("UI inspection requires AXe. Run sh scripts/setup-axe.sh from the Mx checkout, install AXe on PATH, or set MX_AXE_PATH")?;
     Ok(Screen {
         device: device.into(),
@@ -179,7 +179,7 @@ pub async fn tap_on_screen(screen: &Screen, selector: Selector) -> Result<()> {
     if let Some(role) = selector.role {
         args.push(format!("--element-type={role}"));
     }
-    process::output(&bridge(), &args).await?;
+    process::output(&bridge_path(), &args).await?;
     Ok(())
 }
 pub async fn type_text(device: &str, text: &str) -> Result<()> {
@@ -200,7 +200,7 @@ pub async fn type_text(device: &str, text: &str) -> Result<()> {
         )
         .await?;
         process::output(
-            &bridge(),
+            &bridge_path(),
             &strings(&[
                 "key-combo",
                 "--modifiers",
@@ -215,7 +215,7 @@ pub async fn type_text(device: &str, text: &str) -> Result<()> {
         return Ok(());
     }
     process::input(
-        &bridge(),
+        &bridge_path(),
         &strings(&["type", "--stdin", "--udid", device]),
         text.as_bytes(),
     )

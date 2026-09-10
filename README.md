@@ -34,6 +34,10 @@ Real simulator captures from the included [UIKit demo](examples/MxDemo). Mx veri
 
 The sequence demonstrates launch, semantic input, label assertions, and screenshot capture. It is a test app, not a separate Mx graphical interface.
 
+Mx also passed the same core workflow against Aroli, a separate SwiftUI app with package dependencies and multiple targets. It built, booted, installed, launched, entered text, tapped a control by accessibility semantics, verified the next screen, and captured the result. See the [real-world validation record](REAL_WORLD_VALIDATION.md).
+
+<img src="assets/screenshots/aroli-real-validation.png" width="260" alt="Aroli onboarding step 2 after Mx entered a name and tapped Continue">
+
 ## Benchmark results
 
 Local measurements on Apple Silicon with Xcode 26.5, iOS 26.5, and AXe 1.8.0. These are demo results, not guarantees for every app or Mac.
@@ -53,7 +57,7 @@ See [benchmark samples, methodology, and reproduction commands](benchmarks/READM
 
 ## Try it
 
-You need macOS, Xcode with an installed iOS Simulator runtime, Rust 1.89 or later, and AXe 1.8.0. The setup script downloads the pinned AXe release and checks its SHA-256. Python 3 is needed for the helper scripts. The installer requires at least 2 GiB of free disk space; simulator runtimes and app builds need additional space.
+You need macOS, Xcode with an installed iOS Simulator runtime, and Rust 1.89 or later. The setup script downloads AXe 1.8.0 and checks its SHA-256. Mx does not require Python. The installer needs at least 2 GiB free on the build volume and 100 MiB free in your home directory. Simulator runtimes and app builds need additional space.
 
 ```sh
 git clone https://github.com/pol-cova/mx.git
@@ -61,6 +65,7 @@ cd mx
 sh scripts/install.sh
 
 mx devices
+mx doctor
 ```
 
 The installer puts `mx` in Cargo's bin directory and AXe in `~/Library/Application Support/Mx/tools/`. Mx discovers AXe and stores sessions automatically. No environment exports are needed. If `mx` is not on your shell's PATH, use the full executable path printed by the installer.
@@ -112,7 +117,7 @@ The automated Rust suite uses fake Xcode and simulator tools for many behavior c
 
 The published benchmark samples and screenshots come from live MxDemo simulator runs. MxDemo is a small UIKit test app. Compatibility with a larger production app is not established by those results.
 
-The new automatic-discovery installer still needs a completed live end-to-end validation. The first attempt on the development Mac failed during the AXe download with low disk space. See [CONTRIBUTING.md](CONTRIBUTING.md) for the distinction between automated and live checks.
+The automatic-discovery installer and Aroli validation status are recorded in [REAL_WORLD_VALIDATION.md](REAL_WORLD_VALIDATION.md). See [CONTRIBUTING.md](CONTRIBUTING.md) for the distinction between automated and live checks.
 
 ## Contribute
 

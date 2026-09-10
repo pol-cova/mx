@@ -18,4 +18,4 @@ Choose the narrowest workflow:
 
 Return concrete evidence: the active session ID, assertions that passed, screenshot or journey paths, and measured timings when performance matters. Do not silently create, profile, shut down, or delete simulators unless those mutations are part of the user's request.
 
-For exact tool names and JSON schemas, query `tools/list` from `mx mcp`. Run `python3 scripts/capture_tools.py --output .mx/tool-catalog` to save the catalog locally. Do not reconstruct a schema from memory when making a complex request.
+For exact tool names and JSON schemas, query `tools/list` from `mx mcp`. Do not reconstruct a schema from memory when making a complex request.

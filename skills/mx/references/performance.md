@@ -1,6 +1,6 @@
 # Performance and fleet work
 
-Measure before tuning. Separate cold build/boot, warm launch, semantic transition, screenshot capture, and agent-transfer time. Use `scripts/benchmark_flow.py` for repeated warm journey samples. Report the median and every raw sample; five repetitions are a development signal, while twenty or more are appropriate for a demo gate.
+Measure before tuning. Separate cold build/boot, warm launch, semantic transition, screenshot capture, and agent-transfer time. Report the command, environment, median, tail latency, and every raw sample. Five repetitions are a development signal. Use at least twenty for a release claim.
 
 Use `mx_capacity`, `mx_top`, and `mx_metrics` before adding concurrent simulators. Build once and use `mx_launch` on compatible devices. Distinct device sessions may run concurrently; operations on one device stay serialized.
 

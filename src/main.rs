@@ -14,6 +14,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Check Xcode, CoreSimulator, and AXe using the real local tools.
+    Doctor,
     /// Serve agent tools using MCP over stdin/stdout.
     Mcp,
     /// Print MCP client configuration using this executable's absolute path.
@@ -169,6 +171,20 @@ fn print(value: impl serde::Serialize) -> Result<()> {
 
 async fn execute(cli: Cli) -> Result<()> {
     match cli.command {
+        Commands::Doctor => {
+            let xcode = process::output("xcodebuild", &["-version".into()]).await?;
+            let simulators = sim::list().await?;
+            let axe_path = ui::bridge_path();
+            let axe = process::output(&axe_path, &["--version".into()]).await?;
+            print(serde_json::json!({
+                "ready": true,
+                "xcode": xcode.trim(),
+                "axe": axe.trim(),
+                "axe_path": axe_path,
+                "simulators": simulators,
+                "state_dir": session::root()?
+            }))?;
+        }
         Commands::Launch {
             app,
             device,

@@ -12,7 +12,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-The Rust tests use fixtures and fake tools for automated coverage. Changes to real simulator behavior also need a live check on macOS with Xcode and AXe. Include the device type, runtime version, commands, and observed result in your pull request.
+The Rust tests use fixtures and fake tools for automated coverage. Changes to real simulator behavior also need a live check on macOS with Xcode and AXe. Include the device type, runtime version, commands, and observed result in your pull request. Mx's machine-facing implementation is Rust. Do not add Python as a runtime or development requirement.
 
 Keep changes focused. Add a regression test when fixing behavior. For performance claims, include sample counts, median and tail latency, the measurement method, and enough evidence to reproduce the result. See [benchmarks](benchmarks/README.md).
 
