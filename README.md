@@ -1,66 +1,31 @@
 # Mx
 
-Mx lets an AI agent build, run, inspect, and control iOS apps in the Simulator.
+Build and test iOS apps through an AI agent, with semantic UI inspection and lower simulator overhead.
 
-It is a Rust CLI and MCP server for macOS. Mx uses Xcode, CoreSimulator, and the accessibility tree. An agent can build an app, tap controls by label or identifier, enter text, read logs, verify UI state, and save screenshots.
+Mx is a Rust CLI and MCP server for macOS. It builds your app, runs it in the Simulator, reads controls from the accessibility tree, and lets an agent interact by identifier and verify the result. Screenshots are available when you need to check appearance.
 
-Mx is at version 0.1.0. It has been tested with MxDemo and Aroli, a SwiftUI app with iPhone and Watch targets. Fleet profiles are experimental. The numbers below came from one Mac.
+<img src="assets/screenshots/simulator-greeting.png" width="280" alt="An iOS app running in the Simulator after Mx entered a name and verified the greeting">
 
-## Benchmarks
+An iOS app after Mx entered a name, selected Greet, and verified the result. Captured directly from the Simulator.
 
-Tests ran on a 16 GiB Apple Silicon Mac with Xcode 26.5, iOS 26.5, and AXe 1.8.0.
+## Performance
 
-| Test | Result | Scope |
-| --- | ---: | --- |
-| Relaunch an installed app | 235 ms median | 20 MxDemo runs |
-| Capture three verified screens | 2.63 s median, 3.57 s p95 | 20 MxDemo runs |
-| Slim simulator idle memory | 3,429 MiB to 1,077 MiB | Two stock, slim, and restore cycles |
-| Restore simulator profile | 3,465 MiB after restore | Returned to the stock range |
-| Current slim simulator idle | 832 MiB median | 10 samples; 832–843 MiB |
-| Aroli with keyboard visible | 812 MiB median | 10 samples; 812–814 MiB |
-| Two simulators idle | 1,840 MiB combined median | 10 samples; 1,840–1,842 MiB |
-| Two simulators with apps running | 2,245 MiB combined median | 10 samples; 2,245–2,253 MiB |
-| Concurrent app workflow | 11.05 s | Unicode input and screenshots on both simulators |
+Reuse an installed app without rebuilding. Read semantic state changes without requesting another image. Apply optional service profiles to reduce simulator background processes.
 
-The latest single-simulator run reached the 800–850 MiB idle goal. The keyboard-active Aroli sample was lower because foregrounding the app changed the running process mix.
+| Measurement | Result |
+| --- | ---: |
+| Warm app relaunch | **235 ms** median |
+| Three-state verified capture flow | **2.63 s** median, **3.57 s** p95 |
+| Simulator footprint, stock → slim | **3,429 → 1,077 MiB** |
+| Later optimized profile, idle | **832 MiB** median |
 
-The earlier process cleanup lowered the two-simulator medians from 2,329 to 1,840 MiB idle and from 2,807 to 2,245 MiB with both demo apps running. That is about 21% and 20% lower than the older fleet run. Mx stopped both simulators afterward.
+Measured on Apple Silicon with Xcode 26.5, iOS 26.5, and AXe 1.8.0. The linked benchmark report includes the commands, raw results, and measurement boundaries.
 
-The memory number is the summed physical footprint of each simulator's process tree. It is useful for comparing the same machine and workload. It is not the amount of unique system RAM saved.
-
-SpringBoard, the wallpaper extension, BackBoard, and the accessibility server remain because the simulator and semantic UI control need them. The widget renderer restarted after termination, so Mx leaves it alone. The slim profile removes optional Spotlight, Watch, health, and device-management agents. It also stops idle audio and Metal compiler helpers after boot; those helpers restart when needed. InputUI returned for the Aroli keyboard test and is included in the active result.
-
-The fleet run covered two concurrent simulators. A six-device run ended during device creation when the disk filled, so capacity beyond two is unmeasured. Mx checks memory before booting another simulator.
-
-The raw flow and memory samples are in [benchmarks](benchmarks/README.md).
-
-## Aroli
-
-Mx also ran against Aroli, a SwiftUI project with package dependencies and iPhone and Watch targets.
-
-It discovered the Xcode project, built the `Aroli` scheme, booted an iPhone 17 Pro simulator, installed the app, and launched it. Mx read the accessibility tree, entered a name, tapped `Continue` by label and role, and checked that onboarding moved from step 1 to step 2.
-
-The first run took 46.0 seconds. The build took 22.5 seconds and the simulator boot took 9.3 seconds. Mx returned four Swift concurrency warnings from the build as structured diagnostics.
-
-<img src="assets/screenshots/aroli.png" width="280" alt="Aroli onboarding step 2 after Mx entered a name and tapped Continue">
-
-## What Mx does
-
-- Discovers Xcode projects, workspaces, schemes, and simulators.
-- Builds, installs, launches, relaunches, and stops apps.
-- Reads semantic UI state and tracks changes between revisions.
-- Taps controls and enters ASCII or Unicode text.
-- Checks the foreground app before sending input.
-- Returns structured build warnings and errors.
-- Reads live logs with bounded cursors.
-- Captures screenshots and named multi-screen flows.
-- Creates isolated simulators and keeps their sessions separate.
-- Applies reversible service profiles to Mx-owned iOS 26.5 simulators.
-- Checks simulator count and memory headroom before booting another device.
+[Raw samples, methodology, and fleet results →](benchmarks/README.md)
 
 ## Install
 
-You need macOS, Xcode with an iOS Simulator runtime, and Rust 1.89 or later.
+Requires macOS, Xcode with an iOS Simulator runtime, and Rust 1.89+.
 
 ```sh
 git clone https://github.com/pol-cova/mx.git
@@ -69,74 +34,66 @@ sh scripts/install.sh
 mx doctor
 ```
 
-The installer downloads AXe 1.8.0, verifies its checksum, and builds Mx. Mx finds AXe and its session directory automatically. You do not need to export their paths.
+The installer builds Mx and downloads checksum-verified AXe 1.8.0. Keep your Cargo bin directory on `PATH` and allow 2 GiB free for the build.
 
-If the checkout is on a small disk, put Rust build output on another volume:
-
-```sh
-CARGO_TARGET_DIR=/path/with/free/space sh scripts/install.sh
-```
-
-## Run an app
-
-List simulators:
-
-```sh
-mx devices
-```
-
-Choose a simulator UDID and run the included app:
-
-```sh
-mx run \
-  --project examples/MxDemo \
-  --scheme MxDemo \
-  --device SIMULATOR_UDID \
-  --inspect-ui
-
-mx tap --device SIMULATOR_UDID --id increment
-mx observe --device SIMULATOR_UDID
-mx screenshot --device SIMULATOR_UDID
-```
-
-Use your own project path and scheme to run another app.
-
-## Open the simulator in a browser
-
-Mx can expose the active simulator through a local browser using the existing AXe installation:
-
-```sh
-mx web --device SIMULATOR_UDID
-```
-
-Open the returned local URL in Cursor or another browser. Mx streams the simulator as MJPEG and maps pointer and keyboard input back through AXe. The server binds to localhost and requires the same active Mx session and foreground app before accepting input.
-
-## Connect an agent
-
-Generate the MCP configuration for the installed executable:
+## Connect your agent
 
 ```sh
 mx mcp-config
 ```
 
-Copy the JSON into your MCP client. The generated command uses the absolute path to Mx, so it does not depend on the client's shell path.
+Merge the generated `mcpServers` JSON into your MCP client. For clients using another format, register the printed executable path as a **STDIO** server with argument `mcp`. The client starts the server.
 
-The agent can then make a request such as:
+The [Mx skill](skills/mx/SKILL.md) guides the agent through builds, semantic interaction, captures, and diagnostics. Try:
 
-> Build this iOS app, launch it in the simulator, complete the first screen using accessibility controls, verify the result, and save a screenshot.
+> Run this iOS project, inspect its accessibility tree, complete the first screen, and verify the result.
 
-The [`/mx`](skills/mx/SKILL.md) skill gives an agent instructions for app work, flow capture, diagnostics, and simulator performance.
+## Use the CLI
 
-## Tests
+```sh
+mx inspect --project /path/to/YourApp
+mx devices
 
-The repository has 61 passing Rust tests. Test executables stand in for Xcode and AXe where a test needs repeatable errors, cancellation, or concurrent requests. The benchmark table and Aroli run use CoreSimulator and AXe.
+mx run --project /path/to/YourApp --scheme YourApp \
+  --device SIMULATOR_UDID --inspect-ui
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change.
+mx ui --device SIMULATOR_UDID
+mx tap --device SIMULATOR_UDID --id ELEMENT_ID
+mx observe --device SIMULATOR_UDID
+mx relaunch --device SIMULATOR_UDID --inspect-ui
+```
+
+Choose a device from `mx devices` and an element identifier from `mx ui`. Use `mx action` for action sequences with an expected result. A runnable example is included under `examples/`. See `mx --help` for all commands.
+
+## Watch in your editor
+
+```sh
+mx web --device SIMULATOR_UDID
+```
+
+Open the printed URL in your editor or browser and leave the command running. Mx streams directly from AXe, with pointer and text input. No separate streaming service is required. The server is localhost-only; this URL is not an MCP endpoint.
+
+## How it works
+
+```text
+Agent → MCP / Rust CLI → Xcode         build and diagnostics
+                      → CoreSimulator install, launch, and logs
+                      → AXe           semantic tree, input, and video
+```
+
+Mx tracks the device, app process, and UI revisions in a session. Semantic actions check the foreground app and reject stale references. Action requests can wait for an expected label; a standalone tap does not verify the whole task.
+
+Mx runs against local iOS simulators. Semantic inspection uses the accessibility information exposed by the app. Simulator profiles currently target Mx-owned iOS 26.5 devices and keep the services selected for each workload.
+
+## Documentation
+
+- [App workflows](skills/mx/references/app-work.md)
+- [Capture flows](skills/mx-capture-flow/SKILL.md)
+- [Performance and simulator profiles](skills/mx/references/performance.md)
+- [Benchmarks](benchmarks/README.md)
+- [Performance analysis and next optimizations](PERFORMANCE.md)
+- [Development and contributing](CONTRIBUTING.md)
 
 ## License
 
-Mx is available under the [MIT License](LICENSE).
-
-The simulator service catalog contains mappings derived from [simslim](https://github.com/MobAI-App/simslim), also under MIT. Mx downloads [AXe](https://github.com/cameroncooke/AXe), which uses the MIT License. Xcode and simulator runtimes remain subject to Apple's terms.
-
-See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the retained notices.
+[MIT](LICENSE). Uses [AXe](https://github.com/cameroncooke/AXe) and service mappings derived in part from [simslim](https://github.com/MobAI-App/simslim). See [third-party notices](THIRD_PARTY_NOTICES.md).
