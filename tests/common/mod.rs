@@ -45,7 +45,9 @@ impl Fixture {
                 format!("{}:/usr/bin:/bin", self.dir.path().join("bin").display()),
             )
             .env("MX_TEST_ROOT", self.dir.path())
-            .env("MX_STATE_DIR", self.dir.path().join("state"));
+            .env("MX_STATE_DIR", self.dir.path().join("state"))
+            .env("MX_MIN_FREE_MIB", "0")
+            .env("MX_POST_BOOT_SETTLE_SECS", "0");
         command
     }
     pub fn calls(&self) -> Vec<serde_json::Value> {

@@ -72,6 +72,17 @@ const TRANSIENT_HELPERS: &[&str] = &[
 fn should_trim_watch_agents(keep: &[String]) -> bool {
     !keep.iter().any(|capability| capability == "watch")
 }
+/// How long to wait for launchd to finish respawning optional services after
+/// boot, in seconds. Defaults to 5; the second, respawn-catching pass waits the
+/// same duration. Lower it only for tests that assert on the trim sequence.
+fn post_boot_settle() -> std::time::Duration {
+    std::time::Duration::from_secs(
+        std::env::var("MX_POST_BOOT_SETTLE_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(5),
+    )
+}
 pub async fn trim_after_boot(device: &str) -> Result<Vec<String>> {
     let path = receipt_path(device)?;
     if !path.exists() {
@@ -80,10 +91,7 @@ pub async fn trim_after_boot(device: &str) -> Result<Vec<String>> {
     let receipt: Receipt = serde_json::from_slice(&std::fs::read(path)?)?;
     let trim_spotlight = should_trim_spotlight(&receipt.keep);
     let trim_watch = should_trim_watch_agents(&receipt.keep);
-    let live = std::env::var_os("MX_TEST_ROOT").is_none();
-    if live {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    }
+    tokio::time::sleep(post_boot_settle()).await;
     let mut trimmed = Vec::new();
     if trim_spotlight {
         match sim::call(&["terminate", device, "com.apple.Spotlight"]).await {
@@ -117,12 +125,10 @@ pub async fn trim_after_boot(device: &str) -> Result<Vec<String>> {
         engine::transaction::bootout_user_agents(device, &optional_agents).await?;
         trimmed.extend(optional_agents.into_iter().map(String::from));
     }
-    if live {
-        for pass in 0..2 {
-            trimmed.extend(metrics::terminate_named(device, TRANSIENT_HELPERS).await?);
-            if pass == 0 {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            }
+    for pass in 0..2 {
+        trimmed.extend(metrics::terminate_named(device, TRANSIENT_HELPERS).await?);
+        if pass == 0 {
+            tokio::time::sleep(post_boot_settle() * 2).await;
         }
     }
     trimmed.sort();

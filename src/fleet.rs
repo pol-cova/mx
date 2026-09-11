@@ -28,15 +28,25 @@ pub fn available_disk_bytes() -> Result<u64> {
     );
     Ok(u64::from(stats.f_bavail).saturating_mul(stats.f_frsize))
 }
+/// Minimum free disk space for simulator creation, in MiB. Defaults to 2048.
+fn minimum_free_mib() -> Result<u64> {
+    Ok(std::env::var("MX_MIN_FREE_MIB")
+        .ok()
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .context("MX_MIN_FREE_MIB must be a whole number of MiB")
+        })
+        .transpose()?
+        .unwrap_or(2048))
+}
 fn require_creation_headroom() -> Result<()> {
-    if std::env::var_os("MX_TEST_ROOT").is_some() {
-        return Ok(());
-    }
-    const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+    let minimum = minimum_free_mib()?;
     let available = available_disk_bytes()?;
     anyhow::ensure!(
-        available >= MIN_FREE_BYTES,
-        "Simulator creation requires at least 2048 MiB free; only {} MiB is available",
+        available >= minimum.saturating_mul(1024 * 1024),
+        "Simulator creation requires at least {} MiB free; only {} MiB is available",
+        minimum,
         available / 1024 / 1024
     );
     Ok(())
