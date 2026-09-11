@@ -3,20 +3,111 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mx Simulator</title>
 <style>
-  *{box-sizing:border-box}body{margin:0;background:#111;color:#eee;font:14px system-ui;display:grid;place-items:center;min-height:100vh}.shell{display:grid;gap:12px;padding:16px}.bar{display:flex;gap:8px;align-items:center}.bar input{flex:1;padding:8px}.bar button{padding:8px 12px}.screen{max-height:calc(100vh - 84px);max-width:100%;display:block;border-radius:22px;box-shadow:0 8px 40px #000;touch-action:none;user-select:none}.status{color:#aaa}
+  *{box-sizing:border-box}body{margin:0;background:#111;color:#eee;font:14px system-ui;display:grid;place-items:center;min-height:100vh}.shell{display:grid;gap:12px;padding:16px}.bar{display:flex;gap:8px;align-items:center}.bar input{flex:1;padding:8px}.bar button{padding:8px 12px}.bar button.on{background:#3b82f6;color:#fff;border-color:#3b82f6}.screen{max-height:calc(100vh - 84px);max-width:100%;display:block;border-radius:22px;box-shadow:0 8px 40px #000;touch-action:none;user-select:none}.status{color:#aaa}.stage{position:relative;display:inline-block;font-size:0}.stage>*{pointer-events:auto}.overlay{position:absolute;inset:0;pointer-events:none}.hoverbox,.selbox,.drawbox{position:absolute;border-radius:2px}.hoverbox{border:1px solid #38bdf8;background:rgba(56,189,248,.08)}.selbox{border:2px solid #f59e0b;background:rgba(245,158,11,.08)}.drawbox{border:2px dashed #a78bfa;background:rgba(167,139,250,.1)}.badge{position:absolute;transform:translateY(-100%);background:#2563eb;color:#fff;padding:4px 8px;border-radius:6px;font-size:12px;line-height:1.35;white-space:nowrap;pointer-events:none;box-shadow:0 4px 12px #0009}.badge b{display:block;font-size:12px}.badge span{opacity:.85}.info{color:#9ca3af;font-size:12px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.info b{color:#fbbf24}
 </style>
 <div class="shell">
-  <div class="bar"><input id="text" placeholder="Type into focused field"><button id="send">Type</button><span class="status" id="status">Connecting</span></div>
-  <img id="screen" class="screen" src="/stream.mjpg" draggable="false" alt="iOS Simulator">
+  <div class="bar">
+    <input id="text" placeholder="Type into focused field"><button id="send">Type</button>
+    <button id="design">Design</button>
+    <span class="info" id="info"></span>
+    <span class="status" id="status">Connecting</span>
+  </div>
+  <div class="stage">
+    <img id="screen" class="screen" src="/stream.mjpg" draggable="false" alt="iOS Simulator">
+    <div class="overlay" id="overlay"></div>
+  </div>
 </div>
 <script>
-const image=document.querySelector('#screen'), status=document.querySelector('#status');let size={width:390,height:844},start;
+const image=document.querySelector('#screen'),status=document.querySelector('#status'),overlay=document.querySelector('#overlay'),info=document.querySelector('#info'),designBtn=document.querySelector('#design');
+let size={width:390,height:844},start,design=false,elements=[],hoverBox,selBox,drawBox,badge,selected=null,annotations=[];
 fetch('/api/status').then(r=>r.json()).then(s=>{size=s;status.textContent='Connected'}).catch(()=>status.textContent='Disconnected');
 const point=e=>{const r=image.getBoundingClientRect();return{x:(e.clientX-r.left)*size.width/r.width,y:(e.clientY-r.top)*size.height/r.height}};
+const toView=(f,r)=>({left:f.x*r.width/size.width,top:f.y*r.height/size.height,width:f.width*r.width/size.width,height:f.height*r.height/size.height});
 const post=(path,body)=>fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(r=>{if(!r.ok)throw Error(r.status)}).catch(()=>status.textContent='Input failed');
-image.onpointerdown=e=>{start={...point(e),time:performance.now()};image.setPointerCapture(e.pointerId)};
-image.onpointerup=e=>{if(!start)return;const end=point(e),distance=Math.hypot(end.x-start.x,end.y-start.y);if(distance<8)post('/api/tap',end);else post('/api/swipe',{x1:start.x,y1:start.y,x2:end.x,y2:end.y,duration_ms:Math.max(50,Math.min(5000,performance.now()-start.time))});start=null};
+function flatten(node,out){
+  const f=node.frame;if(f&&f.width>1&&f.height>1)out.push({role:node.type||node.role||'Unknown',identifier:node.AXUniqueId||node.AXIdentifier||null,label:node.AXLabel||null,value:node.AXValue!==undefined&&node.AXValue!==null?String(node.AXValue):null,frame:f});
+  if(node.children)for(const c of node.children)flatten(c,out);
+  return out;
+}
+async function loadUI(){
+  try{
+    const raw=await(await fetch('/api/ui')).json();
+    const roots=Array.isArray(raw)?raw:[];
+    elements=roots.flatMap(r=>flatten(r,[]));
+    status.textContent='Connected';
+  }catch{status.textContent='Inspect failed'}
+}
+function describe(el){const bits=[];if(el.identifier)bits.push('#'+el.identifier);if(el.label)bits.push('"'+el.label+'"');if(el.value!==null)bits.push('value='+el.value);return bits.join(' ')}
+function box(cls,f){const b=document.createElement('div');b.className=cls;const r=image.getBoundingClientRect();const v=toView(f,r);Object.assign(b.style,{left:v.left+'px',top:v.top+'px',width:v.width+'px',height:v.height+'px'});overlay.append(b);return b}
+function hitTest(p){let best=null;for(const el of elements){const f=el.frame;if(p.x>=f.x&&p.x<=f.x+f.width&&p.y>=f.y&&p.y<=f.y+f.height){const a=f.width*f.height;if(!best||a<best.frame.width*best.frame.height)best=el}}return best}
+function clearHover(){if(hoverBox){hoverBox.remove();hoverBox=null}if(badge){badge.remove();badge=null}}
+function setHover(el,clientX,clientY){
+  if(hoverBox)hoverBox.remove();if(badge)badge.remove();
+  if(!el){hoverBox=null;badge=null;return}
+  const f={x:el.frame.x,y:el.frame.y,width:el.frame.width,height:el.frame.height};
+  hoverBox=box('hoverbox',f);
+  badge=document.createElement('div');badge.className='badge';
+  badge.innerHTML='<b>#'+el.role+'</b><span>'+(describe(el)||'Click to select, drag to draw')+'</span>';
+  const r=image.getBoundingClientRect();const v=toView(f,r);
+  badge.style.left=Math.min(v.left, r.width-220)+'px';badge.style.top=v.top+'px';
+  overlay.append(badge);
+}
+function select(el){
+  if(selBox)selBox.remove();selBox=null;selected=el;
+  if(!el){info.textContent='';return}
+  selBox=box('selbox',el.frame);
+  info.innerHTML='Selected: <b>'+el.role+'</b> '+describe(el)+' @ '+Math.round(el.frame.x)+','+Math.round(el.frame.y)+' '+Math.round(el.frame.width)+'×'+Math.round(el.frame.height);
+}
+async function toggleDesign(){
+  design=!design;designBtn.classList.toggle('on',design);
+  overlay.style.display=design?'block':'none';
+  clearHover();select(null);annotations.forEach(a=>a.remove());annotations=[];
+  if(design){designBtn.textContent='Designing…';await loadUI();designBtn.textContent='Design';status.textContent='Design: '+elements.length+' elements — click to select, drag to draw'}
+  else status.textContent='Connected';
+}
+designBtn.onclick=toggleDesign;
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&design)toggleDesign()});
+function pointerDown(e){
+  const p=point(e);
+  if(design){
+    e.preventDefault();
+    start={x:p.x,y:p.y,cx:e.clientX,cy:e.clientY};
+    image.setPointerCapture(e.pointerId);
+    return;
+  }
+  start={x:p.x,y:p.y,time:performance.now()};image.setPointerCapture(e.pointerId);
+}
+function pointerMove(e){
+  if(!design||!start)return;
+  if(drawBox)drawBox.remove();
+  drawBox=document.createElement('div');drawBox.className='drawbox';
+  drawBox.style.left=Math.min(start.cx,e.clientX)+'px';drawBox.style.top=Math.min(start.cy,e.clientY)+'px';
+  drawBox.style.width=Math.abs(e.clientX-start.cx)+'px';drawBox.style.height=Math.abs(e.clientY-start.cy)+'px';
+  overlay.append(drawBox);
+}
+function pointerUp(e){
+  if(!start)return;
+  if(design){
+    const p=point(e),distance=Math.hypot(p.x-start.x,p.y-start.y);
+    if(drawBox){drawBox.remove();drawBox=null}
+    if(distance<8){select(hitTest(p));setHover(hitTest(p),e.clientX,e.clientY)}
+    else{
+      const f={x:Math.min(start.x,p.x),y:Math.min(start.y,p.y),width:Math.abs(p.x-start.x),height:Math.abs(p.y-start.y)};
+      const inner=elements.filter(el=>el.frame.x<f.x+f.width&&el.frame.x+el.frame.width>f.x&&el.frame.y<f.y+f.height&&el.frame.y+el.frame.height>f.y);
+      const a=box('drawbox',f);annotations.push(a);
+      info.textContent='Region drawn: '+(inner.length?inner.length+' elements inside':'no elements inside')+' @ '+Math.round(f.x)+','+Math.round(f.y)+' '+Math.round(f.width)+'×'+Math.round(f.height);
+    }
+    start=null;return;
+  }
+  const end=point(e),distance=Math.hypot(end.x-start.x,end.y-start.y);
+  if(distance<8)post('/api/tap',end);else post('/api/swipe',{x1:start.x,y1:start.y,x2:end.x,y2:end.y,duration_ms:Math.max(50,Math.min(5000,performance.now()-start.time))});
+  start=null;
+}
+image.onpointerdown=pointerDown;
+image.onpointermove=e=>{if(design&&!start)setHover(hitTest(point(e)),e.clientX,e.clientY);pointerMove(e)};
+image.onpointerup=pointerUp;
 image.onpointercancel=()=>start=null;
+image.onpointerleave=()=>{if(design&&!start)clearHover()};
 document.querySelector('#send').onclick=()=>{const input=document.querySelector('#text');post('/api/type',{text:input.value});input.value=''};
 document.querySelector('#text').onkeydown=e=>{if(e.key==='Enter')document.querySelector('#send').click()};
 </script>

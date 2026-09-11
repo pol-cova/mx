@@ -169,6 +169,10 @@ fn handle(
             response(&mut stream, 200, "application/json", &body)
         }
         ("GET", "/stream.mjpg") => stream_frames(stream, frames),
+        ("GET", "/api/ui") => {
+            let body = ui_tree(device)?;
+            response(&mut stream, 200, "application/json", &body)
+        }
         ("POST", "/api/tap") => {
             control(device, session_id, body, Control::Tap, dimensions)?;
             response(&mut stream, 204, "text/plain", b"")
@@ -291,6 +295,15 @@ fn control(
         }
     }
     Ok(())
+}
+
+fn ui_tree(device: &str) -> Result<Vec<u8>> {
+    let output = Command::new(ui::bridge_path())
+        .args(["describe-ui", "--udid", device])
+        .output()?;
+    anyhow::ensure!(output.status.success(), "AXe UI inspection failed");
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    Ok(serde_json::to_vec(&value)?)
 }
 
 fn check_foreground(device: &str, expected_pid: u32) -> Result<()> {
