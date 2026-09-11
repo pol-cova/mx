@@ -26,7 +26,7 @@ impl Fixture {
         std::fs::create_dir(&project).unwrap();
         let bin = dir.path().join("bin");
         std::fs::create_dir(&bin).unwrap();
-        for name in ["xcrun", "xcodebuild", "axe"] {
+        for name in ["xcrun", "xcodebuild"] {
             let path = bin.join(name);
             std::fs::copy(fake_tool(), &path).unwrap();
         }
@@ -45,8 +45,7 @@ impl Fixture {
                 format!("{}:/usr/bin:/bin", self.dir.path().join("bin").display()),
             )
             .env("MX_TEST_ROOT", self.dir.path())
-            .env("MX_STATE_DIR", self.dir.path().join("state"))
-            .env("MX_AXE_PATH", self.dir.path().join("bin/axe"));
+            .env("MX_STATE_DIR", self.dir.path().join("state"));
         command
     }
     pub fn calls(&self) -> Vec<serde_json::Value> {

@@ -71,7 +71,7 @@ fn request(url: &str, request: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn web_serves_status_and_streams_directly_from_axe() {
+fn web_serves_status_and_streams_native_frames() {
     let fixture = Fixture::new();
     let (mut child, started) = start_web(&fixture);
     assert_eq!(started["device"], "test-device");
@@ -93,7 +93,7 @@ fn web_serves_status_and_streams_directly_from_axe() {
 
     let calls = fixture.calls();
     assert!(calls.iter().any(|call| {
-        call["program"] == "axe"
+        call["program"] == "mxd"
             && call["args"].as_array().is_some_and(|args| {
                 args.first() == Some(&Value::String("stream-video".into()))
                     && args.contains(&Value::String("mjpeg".into()))
@@ -104,7 +104,7 @@ fn web_serves_status_and_streams_directly_from_axe() {
 }
 
 #[test]
-fn web_sends_validated_input_through_axe() {
+fn web_sends_validated_input_through_native() {
     let fixture = Fixture::new();
     let (mut child, started) = start_web(&fixture);
     let body = r#"{"x":10,"y":20}"#;
@@ -115,7 +115,7 @@ fn web_sends_validated_input_through_axe() {
     let response = request(started["url"].as_str().unwrap(), request_bytes.as_bytes());
     assert!(response.starts_with(b"HTTP/1.1 204"));
     assert!(fixture.calls().iter().any(|call| {
-        call["program"] == "axe"
+        call["program"] == "mxd"
             && call["args"].as_array().and_then(|args| args.first())
                 == Some(&Value::String("tap".into()))
     }));

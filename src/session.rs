@@ -126,6 +126,16 @@ pub fn bind(
     Ok(session)
 }
 pub fn check_foreground(session: &Session, screen: &Screen) -> Result<()> {
+    if screen.pid.is_none() {
+        anyhow::ensure!(
+            unsafe { libc::kill(session.pid as i32, 0) } == 0,
+            "Foreground application changed: session {} expects {} (PID {}), accessibility omitted a pid and the session process is gone",
+            session.id,
+            session.bundle_id,
+            session.pid
+        );
+        return Ok(());
+    }
     anyhow::ensure!(
         screen.pid == Some(session.pid),
         "Foreground application changed: session {} expects {} (PID {}), accessibility returned {:?}; refusing input",
@@ -238,6 +248,9 @@ mod tests {
         let mut screen = Screen {
             device: "d".into(),
             pid: Some(1),
+            width: 390.0,
+            height: 844.0,
+            hash: None,
             elements: crate::ui::parse_elements(
                 r#"[{"type":"StaticText","AXUniqueId":"counter","AXLabel":"0"}]"#,
             )

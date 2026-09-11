@@ -1,6 +1,6 @@
 use std::{
     env, fs,
-    io::{self, Read, Write},
+    io::{self, Read},
     path::Path,
     process, thread,
     time::Duration,
@@ -38,7 +38,6 @@ fn main() {
     match name.as_str() {
         "xcodebuild" => xcodebuild(&root, &args),
         "xcrun" => xcrun(&root, &args),
-        "axe" => axe(&root, &args),
         _ => process::exit(2),
     }
 }
@@ -123,25 +122,4 @@ fn launchctl(root: &Path, args: &[String]) {
         save_labels(root, &mut current);
     }
     fs::remove_dir(lock).unwrap();
-}
-
-fn axe(root: &Path, args: &[String]) {
-    match args.first().map(String::as_str).unwrap_or("") {
-        "--version" => println!("1.8.0"),
-        "describe-ui" => {
-            let pid = env::var("MX_TEST_FOREGROUND_PID").unwrap_or_else(|_| "4321".into());
-            println!(r#"[{{"type":"Application","pid":{pid},"frame":{{"x":0,"y":0,"width":390,"height":844}},"children":[{{"type":"Button","AXLabel":"Continue","AXUniqueId":"first"}},{{"type":"Button","AXLabel":"Continue","AXUniqueId":"second"}},{{"type":"TextField","AXLabel":"Name","AXUniqueId":"name","AXValue":""}}]}}]"#);
-        }
-        "stream-video" => loop {
-            io::stdout()
-                .write_all(b"\xff\xd8test-frame\xff\xd9")
-                .unwrap();
-            io::stdout().flush().unwrap();
-            thread::sleep(Duration::from_millis(20));
-        },
-        "tap" | "swipe" => {}
-        "key-combo" => { fs::copy(root.join("pasteboard.txt"), root.join("typed.txt")).unwrap(); }
-        "type" => { let mut input = String::new(); io::stdin().read_to_string(&mut input).unwrap(); fs::write(root.join("typed.txt"), input).unwrap(); }
-        _ => {}
-    }
 }

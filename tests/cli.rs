@@ -48,7 +48,7 @@ fn logs_require_a_numeric_pid() {
 fn mcp_config_uses_absolute_executable_and_only_explicit_overrides() {
     let result = Command::new(env!("CARGO_BIN_EXE_mx"))
         .arg("mcp-config")
-        .env_remove("MX_AXE_PATH")
+        .env_remove("MX_GUEST_PATH")
         .env_remove("MX_STATE_DIR")
         .output()
         .unwrap();
@@ -61,15 +61,15 @@ fn mcp_config_uses_absolute_executable_and_only_explicit_overrides() {
 
     let result = Command::new(env!("CARGO_BIN_EXE_mx"))
         .arg("mcp-config")
-        .env("MX_AXE_PATH", "/custom path/axe")
+        .env("MX_GUEST_PATH", "/custom path/mx-guest")
         .env("MX_STATE_DIR", "/custom path/state")
         .output()
         .unwrap();
     assert!(result.status.success());
     let config: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(
-        config["mcpServers"]["mx"]["env"]["MX_AXE_PATH"],
-        "/custom path/axe"
+        config["mcpServers"]["mx"]["env"]["MX_GUEST_PATH"],
+        "/custom path/mx-guest"
     );
     assert_eq!(
         config["mcpServers"]["mx"]["env"]["MX_STATE_DIR"],

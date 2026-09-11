@@ -194,21 +194,7 @@ async fn install_launch(
     sim::call(&["install", &device.udid, &app.to_string_lossy()]).await?;
     timings_ms.insert("install".into(), phase.elapsed().as_millis());
     let phase = Instant::now();
-    let launched = sim::call(&[
-        "launch",
-        "--terminate-running-process",
-        &device.udid,
-        &bundle_id,
-    ])
-    .await?;
-    let pid = launched
-        .trim()
-        .rsplit_once(':')
-        .context("Unexpected simctl launch response")?
-        .1
-        .trim()
-        .parse()
-        .context("Unexpected application PID")?;
+    let pid = terminate_and_launch(&device.udid, &bundle_id).await?;
     timings_ms.insert("launch".into(), phase.elapsed().as_millis());
     Ok((bundle_id, pid, timings_ms))
 }
@@ -269,21 +255,7 @@ pub async fn relaunch(request: RelaunchRequest) -> Result<Value> {
     let previous = session::for_device(&request.device)?;
     let _lock = session::lock(&previous.device)?;
     let phase = Instant::now();
-    let launched = sim::call(&[
-        "launch",
-        "--terminate-running-process",
-        &previous.device,
-        &previous.bundle_id,
-    ])
-    .await?;
-    let pid = launched
-        .trim()
-        .rsplit_once(':')
-        .context("Unexpected simctl launch response")?
-        .1
-        .trim()
-        .parse()
-        .context("Unexpected application PID")?;
+    let pid = terminate_and_launch(&previous.device, &previous.bundle_id).await?;
     let launch_ms = phase.elapsed().as_millis();
     let mut bound = session::bind(
         previous.device.clone(),
@@ -351,6 +323,26 @@ pub async fn stop(requested: &str, bundle_id: &str) -> Result<Value> {
         "terminated": terminated,
         "already_stopped": !terminated
     }))
+}
+
+async fn terminate_and_launch(udid: &str, bundle_id: &str) -> Result<u32> {
+    if std::env::var_os("MX_TEST_ROOT").is_none() && crate::native::coresim::launch_supported() {
+        let udid = udid.to_owned();
+        let bundle_id = bundle_id.to_owned();
+        return tokio::task::spawn_blocking(move || {
+            crate::native::coresim::terminate_and_launch(&udid, &bundle_id)
+        })
+        .await?;
+    }
+    let launched = sim::call(&["launch", "--terminate-running-process", udid, bundle_id]).await?;
+    launched
+        .trim()
+        .rsplit_once(':')
+        .context("Unexpected simctl launch response")?
+        .1
+        .trim()
+        .parse()
+        .context("Unexpected application PID")
 }
 
 fn app_is_already_stopped(error: &anyhow::Error) -> bool {

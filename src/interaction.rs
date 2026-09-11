@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::time::Duration;
 
 pub async fn inspect_bound(device: &str, session: &session::Session) -> Result<ui::Screen> {
-    let screen = ui::inspect(device).await?;
+    let screen = crate::native::inspect_pid(device, Some(session.pid)).await?;
     session::check_foreground(session, &screen)?;
     Ok(screen)
 }
@@ -119,6 +119,31 @@ pub async fn act(request: ActionRequest) -> Result<session::Delta> {
     Ok(delta)
 }
 
+const SETTLE_POLL: Duration = Duration::from_millis(50);
+const SETTLE_POLL_WITHOUT_HASH: Duration = Duration::from_millis(150);
+
+fn has_expected_label(screen: &ui::Screen, expected: Option<&str>) -> bool {
+    expected.is_none_or(|label| {
+        screen
+            .elements
+            .iter()
+            .any(|element| element.label.as_deref() == Some(label))
+    })
+}
+
+fn screen_hash(screen: &ui::Screen) -> Option<&str> {
+    screen.hash.as_deref().filter(|hash| !hash.is_empty())
+}
+
+fn hashes_equal(left: Option<&str>, right: Option<&str>) -> bool {
+    matches!((left, right), (Some(left), Some(right)) if left == right)
+}
+
+/// Pause before a stability sample. Replace with IOSurface `wait_quiet` later.
+async fn wait_stability_window() {
+    tokio::time::sleep(SETTLE_POLL).await;
+}
+
 pub async fn settle(
     device: &str,
     session: &session::Session,
@@ -126,20 +151,46 @@ pub async fn settle(
     timeout_ms: u64,
 ) -> Result<ui::Screen> {
     tokio::time::timeout(Duration::from_millis(timeout_ms), async {
-        let mut previous = None;
+        let mut screen = inspect_bound(device, session).await?;
         loop {
-            let screen = inspect_bound(device, session).await?;
-            let matches = expected.is_none_or(|label| {
-                screen
-                    .elements
-                    .iter()
-                    .any(|e| e.label.as_deref() == Some(label))
-            });
-            if matches && previous.as_ref() == Some(&screen) {
-                return Ok(screen);
+            if !has_expected_label(&screen, expected) {
+                tokio::time::sleep(SETTLE_POLL).await;
+                match crate::native::inspect_hash(device, Some(session.pid)).await? {
+                    Some(hash) if hashes_equal(screen_hash(&screen), Some(hash.as_str())) => {
+                        continue;
+                    }
+                    Some(_) => {
+                        screen = inspect_bound(device, session).await?;
+                    }
+                    None => {
+                        tokio::time::sleep(SETTLE_POLL_WITHOUT_HASH.saturating_sub(SETTLE_POLL))
+                            .await;
+                        screen = inspect_bound(device, session).await?;
+                    }
+                }
+                continue;
             }
-            previous = Some(screen);
-            tokio::time::sleep(Duration::from_millis(150)).await;
+
+            wait_stability_window().await;
+            match crate::native::inspect_hash(device, Some(session.pid)).await? {
+                Some(hash) if hashes_equal(screen_hash(&screen), Some(hash.as_str())) => {
+                    return Ok(screen);
+                }
+                Some(_) => {
+                    screen = inspect_bound(device, session).await?;
+                }
+                None => {
+                    tokio::time::sleep(SETTLE_POLL_WITHOUT_HASH.saturating_sub(SETTLE_POLL)).await;
+                    let next = inspect_bound(device, session).await?;
+                    if has_expected_label(&next, expected)
+                        && (hashes_equal(screen_hash(&screen), screen_hash(&next))
+                            || screen_hash(&next).is_none())
+                    {
+                        return Ok(next);
+                    }
+                    screen = next;
+                }
+            }
         }
     })
     .await

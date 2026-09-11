@@ -4,7 +4,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -52,73 +51,13 @@ fn write_viewer(path: &Path, states: &Value) -> Result<()> {
     Ok(())
 }
 
-async fn expected_screen(
-    device: &str,
-    bound: &session::Session,
-    expected: Option<&str>,
-    timeout_ms: u64,
-) -> Result<ui::Screen> {
-    if expected.is_none() {
-        return interaction::settle(device, bound, None, timeout_ms).await;
-    }
-    tokio::time::timeout(Duration::from_millis(timeout_ms), async {
-        loop {
-            let screen = interaction::inspect_bound(device, bound).await?;
-            if screen
-                .elements
-                .iter()
-                .any(|element| element.label.as_deref() == expected)
-            {
-                return Ok(screen);
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        }
-    })
-    .await
-    .context("UI did not reach the expected flow label before timeout")?
-}
-
 async fn run_actions(
     device: &str,
     bound: &session::Session,
     current: &ui::Screen,
     actions: Vec<interaction::Action>,
 ) -> Result<()> {
-    let batch_steps: Option<Vec<String>> = actions
-        .iter()
-        .map(|action| match action {
-            interaction::Action::Tap { selector }
-                if selector.label.is_none()
-                    && selector.role.is_none()
-                    && selector.identifier.as_ref().is_some_and(|id| {
-                        !id.is_empty()
-                            && id
-                                .bytes()
-                                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
-                    }) =>
-            {
-                Some(format!(
-                    "tap --id {}",
-                    selector.identifier.as_deref().unwrap_or_default()
-                ))
-            }
-            interaction::Action::Type { text }
-                if text.is_ascii()
-                    && !text.is_empty()
-                    && text
-                        .bytes()
-                        .all(|b| !b.is_ascii_control() && !matches!(b, b'\'' | b'"' | b'\\')) =>
-            {
-                Some(format!("type '{text}'"))
-            }
-            _ => None,
-        })
-        .collect();
-    if actions.len() > 1
-        && let Some(steps) = batch_steps
-    {
-        return ui::batch_steps(device, &steps).await;
-    }
+    let _ = (device, bound);
     for action in actions {
         match action {
             interaction::Action::Tap { selector } => ui::tap_on_screen(current, selector).await?,
@@ -216,7 +155,7 @@ pub async fn capture(request: CaptureRequest) -> Result<Value> {
                 .any(|element| element.label.as_ref() == Some(expected))
         });
         if has_actions || !current_matches {
-            current = expected_screen(
+            current = interaction::settle(
                 &device_id,
                 &bound,
                 state.expect_label.as_deref(),
