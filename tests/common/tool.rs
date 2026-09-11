@@ -5,6 +5,7 @@ use std::{
     process, thread,
     time::Duration,
 };
+use process::Stdio;
 
 fn escape(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
@@ -18,6 +19,75 @@ fn record(root: &Path, name: &str, args: &[String]) {
     use std::io::Write;
     let mut file = fs::OpenOptions::new().create(true).append(true).open(root.join("calls.jsonl")).unwrap();
     writeln!(file, "{{\"program\":\"{}\",\"args\":{}}}", escape(name), json_array(args)).unwrap();
+}
+
+/// Emulate the real simulator process tree: a `launchd_sim` root carrying the
+/// device UDID in its command line, with a transient helper child. These are
+/// real processes in their own process group, so the unmodified metrics.rs
+/// proc_pid_rusage / proc_pidpath / kill logic observes and trims them.
+fn spawn_sim_tree(root: &Path) {
+    use std::os::unix::process::CommandExt;
+    let exe = env::current_exe().unwrap();
+    let sim_bin = root.join("launchd_sim");
+    fs::copy(&exe, &sim_bin).unwrap();
+    let sim = process::Command::new(&sim_bin)
+        .arg0("launchd_sim")
+        .arg("__sim-tree")
+        .arg(root.to_string_lossy().as_ref())
+        .arg("test-device")
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    fs::write(root.join("sim-tree.pid"), sim.id().to_string()).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !root.join("sim-helper.pid").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "simulator tree helper did not start"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Long-lived stand-in for a simulator process. Spawns a transient helper
+/// child, then exits when its PID file is removed (simulator shutdown).
+fn sim_tree_process(root: &Path) {
+    use std::os::unix::process::CommandExt;
+    let exe = env::current_exe().unwrap();
+    let helper_bin = root.join("MTLCompilerService");
+    fs::copy(&exe, &helper_bin).unwrap();
+    let helper = process::Command::new(&helper_bin)
+        .arg0("MTLCompilerService")
+        .arg("__sim-tree-helper")
+        .arg(root.to_string_lossy().as_ref())
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    fs::write(root.join("sim-helper.pid"), helper.id().to_string()).unwrap();
+    let mut helper = helper;
+    loop {
+        if !root.join("sim-tree.pid").exists() {
+            process::exit(0);
+        }
+        let _ = helper.try_wait();
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Transient helper: dies on SIGTERM like the real Metal compiler service.
+fn sim_tree_helper(root: &Path) {
+    loop {
+        if !root.join("sim-helper.pid").exists() {
+            process::exit(0);
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn labels(root: &Path) -> Vec<String> {
@@ -34,6 +104,14 @@ fn main() {
     let root = std::path::PathBuf::from(env::var_os("MX_TEST_ROOT").unwrap());
     let name = env::args().next().and_then(|p| Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned())).unwrap();
     let args: Vec<String> = env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("__sim-tree") {
+        sim_tree_process(&root);
+        return;
+    }
+    if args.first().map(String::as_str) == Some("__sim-tree-helper") {
+        sim_tree_helper(&root);
+        return;
+    }
     record(&root, &name, &args);
     match name.as_str() {
         "xcodebuild" => xcodebuild(&root, &args),
@@ -77,7 +155,12 @@ fn xcrun(root: &Path, args: &[String]) {
             println!(r#"{{"devices":{{"com.apple.CoreSimulator.SimRuntime.iOS-26-5":[{}]}}}}"#, devices.join(","));
         }
         "create" => println!("00000000-0000-4000-8000-000000000001"),
-        "boot" => { fs::write(root.join("booted"), "").unwrap(); }
+        "boot" => {
+            fs::write(root.join("booted"), "").unwrap();
+            if env::var("MX_TEST_SIM_TREE").as_deref() == Ok("1") && !root.join("sim-tree.pid").exists() {
+                spawn_sim_tree(root);
+            }
+        }
         "pbcopy" => { let mut input = String::new(); io::stdin().read_to_string(&mut input).unwrap(); fs::write(root.join("pasteboard.txt"), input).unwrap(); }
         "launch" => println!("dev.mx.test: 4321"),
         "io" => {
