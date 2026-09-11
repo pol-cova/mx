@@ -298,12 +298,9 @@ fn control(
 }
 
 fn ui_tree(device: &str) -> Result<Vec<u8>> {
-    let output = Command::new(ui::bridge_path())
-        .args(["describe-ui", "--udid", device])
-        .output()?;
-    anyhow::ensure!(output.status.success(), "AXe UI inspection failed");
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    Ok(serde_json::to_vec(&value)?)
+    let bound = session::active(device)?;
+    let screen = native::inspect_blocking(device, Some(bound.pid))?;
+    Ok(serde_json::to_vec(&screen)?)
 }
 
 fn check_foreground(device: &str, expected_pid: u32) -> Result<()> {
