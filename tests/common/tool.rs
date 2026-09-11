@@ -18,7 +18,13 @@ fn json_array(values: &[String]) -> String {
 fn record(root: &Path, name: &str, args: &[String]) {
     use std::io::Write;
     let mut file = fs::OpenOptions::new().create(true).append(true).open(root.join("calls.jsonl")).unwrap();
+    let mut locked = false;
+    for _ in 0..500 {
+        if file.try_lock().is_ok() { locked = true; break; }
+        thread::sleep(Duration::from_millis(2));
+    }
     writeln!(file, "{{\"program\":\"{}\",\"args\":{}}}", escape(name), json_array(args)).unwrap();
+    if locked { let _ = file.unlock(); }
 }
 
 /// Emulate the real simulator process tree: a `launchd_sim` root carrying the

@@ -56,47 +56,63 @@ pub fn usage(pid: u32) -> Option<Usage> {
     })
 }
 async fn simulator_processes(device: &str) -> Result<(String, Vec<Usage>)> {
+    let table = table().await?;
     let device = runtime::booted_device(device).await?;
-    let processes = process_tree(&device.udid).await?;
+    let processes = tree(&table, &device.udid)?;
     Ok((device.udid, processes))
 }
-async fn process_tree(device: &str) -> Result<Vec<Usage>> {
+pub(crate) async fn table() -> Result<Vec<(u32, u32, String)>> {
     let output = process::output(
         "/bin/ps",
         &process::strings(&["-axo", "pid=,ppid=,command="]),
     )
     .await?;
-    let mut parents = BTreeMap::new();
+    Ok(output
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let pid = words.next().and_then(|s| s.parse::<u32>().ok())?;
+            let parent = words.next().and_then(|s| s.parse::<u32>().ok())?;
+            Some((pid, parent, line.to_owned()))
+        })
+        .collect())
+}
+fn tree(table: &[(u32, u32, String)], device: &str) -> Result<Vec<Usage>> {
+    let mut children: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
     let mut root = None;
-    for line in output.lines() {
-        let mut words = line.split_whitespace();
-        let Some(pid) = words.next().and_then(|s| s.parse::<u32>().ok()) else {
-            continue;
-        };
-        let Some(parent) = words.next().and_then(|s| s.parse::<u32>().ok()) else {
-            continue;
-        };
-        parents.insert(pid, parent);
-        if words.next() == Some("launchd_sim") && line.contains(device) {
-            root = Some(pid);
+    for (pid, parent, line) in table {
+        children.entry(*parent).or_default().push(*pid);
+        if root.is_none()
+            && line.split_whitespace().nth(2) == Some("launchd_sim")
+            && line.contains(device)
+        {
+            root = Some(*pid);
         }
     }
-    let mut pids =
-        BTreeSet::from([root.context("Cannot locate this simulator's launchd process")?]);
-    loop {
-        let new: Vec<_> = parents
-            .iter()
-            .filter(|(pid, parent)| pids.contains(parent) && !pids.contains(pid))
-            .map(|(pid, _)| *pid)
-            .collect();
-        if new.is_empty() {
-            break;
+    let root = root.context("Cannot locate this simulator's launchd process")?;
+    let mut pids = BTreeSet::new();
+    let mut frontier = vec![root];
+    while let Some(pid) = frontier.pop() {
+        if pids.insert(pid) {
+            frontier.extend(children.get(&pid).cloned().unwrap_or_default());
         }
-        pids.extend(new);
     }
     let mut processes: Vec<_> = pids.into_iter().filter_map(usage).collect();
     processes.sort_by_key(|p| std::cmp::Reverse(p.physical_bytes));
     Ok(processes)
+}
+
+pub(crate) fn footprint_parts(table: &[(u32, u32, String)], device_udid: &str) -> Result<u64> {
+    Ok(tree(table, device_udid)?
+        .iter()
+        .map(|p| p.physical_bytes)
+        .sum())
+}
+pub(crate) async fn any_named(device: &str, names: &[&str]) -> Result<bool> {
+    let table = table().await?;
+    Ok(tree(&table, device)?
+        .iter()
+        .any(|p| names.contains(&p.name.as_str())))
 }
 pub async fn snapshot(device: &str) -> Result<serde_json::Value> {
     let (device, processes) = simulator_processes(device).await?;
@@ -106,7 +122,8 @@ pub async fn snapshot(device: &str) -> Result<serde_json::Value> {
     )
 }
 pub(crate) async fn terminate_named(device: &str, names: &[&str]) -> Result<Vec<String>> {
-    let processes = process_tree(device).await?;
+    let table = table().await?;
+    let processes = tree(&table, device)?;
     let mut terminated = Vec::new();
     for process in processes
         .into_iter()

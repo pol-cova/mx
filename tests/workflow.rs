@@ -693,6 +693,7 @@ fn fresh_device_creation_uses_requested_type_without_cloning_source_data() {
     );
 }
 
+
 #[test]
 fn training_disk_headroom_check_uses_the_real_filesystem() {
     let fixture = Fixture::new();
