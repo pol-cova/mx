@@ -292,7 +292,7 @@ impl Server {
     }
 
     #[tool(
-        description = "Inspect the foreground simulator UI as compact semantic elements. Requires AXe. Use returned accessibility identifiers or labels with mx_tap.",
+        description = "Inspect the foreground simulator UI as compact semantic elements. Use returned accessibility identifiers or labels with mx_tap.",
         annotations(read_only_hint = true)
     )]
     async fn mx_ui(

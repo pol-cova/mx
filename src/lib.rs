@@ -5,6 +5,7 @@ pub mod flow;
 pub mod interaction;
 pub mod logs;
 pub mod metrics;
+pub mod native;
 pub mod process;
 pub mod profile;
 pub mod runtime;

@@ -27,7 +27,7 @@ if [ "$build_available_kib" -lt 2097152 ]; then
     echo 'Set CARGO_TARGET_DIR to a path on a larger volume and retry.' >&2
     exit 1
 fi
-sh "$root/scripts/setup-axe.sh"
+sh "$root/scripts/setup-native.sh"
 printf 'Building and installing Mx...\n'
 cargo install --path "$root" --locked --root "${CARGO_HOME:-$HOME/.cargo}"
 mx_binary="${CARGO_HOME:-$HOME/.cargo}/bin/mx"

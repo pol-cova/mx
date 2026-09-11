@@ -1,20 +1,17 @@
-use crate::{runtime, session, ui};
+use crate::{native, runtime, session};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
     net::{TcpListener, TcpStream},
-    os::unix::process::CommandExt,
-    process::{Child, Command, Stdio},
     sync::{
-        Arc, Condvar, Mutex,
+        Arc,
         atomic::{AtomicBool, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
 
-const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 const MAX_REQUEST_BYTES: usize = 32 * 1024;
 const INDEX: &str = include_str!("web/index.html");
 
@@ -37,19 +34,9 @@ pub struct WebResult {
     pub first_frame_ms: u128,
 }
 
-struct FrameState {
-    sequence: u64,
-    frame: Arc<[u8]>,
-    error: Option<String>,
-}
-
-type Frames = Arc<(Mutex<FrameState>, Condvar)>;
-
 pub struct Server {
     result: WebResult,
-    child: Child,
-    group: i32,
-    stopped: Arc<AtomicBool>,
+    video: native::video::Video,
     listener: Option<thread::JoinHandle<()>>,
 }
 
@@ -60,8 +47,7 @@ impl Server {
 
     pub async fn wait(&mut self) -> Result<()> {
         loop {
-            if let Some(status) = self.child.try_wait()? {
-                anyhow::ensure!(status.success(), "AXe video stream exited with {status}");
+            if self.video.stopped.load(Ordering::Relaxed) {
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -71,10 +57,7 @@ impl Server {
 
 impl Drop for Server {
     fn drop(&mut self) {
-        self.stopped.store(true, Ordering::Relaxed);
-        unsafe {
-            libc::kill(-self.group, libc::SIGTERM);
-        }
+        self.video.stopped.store(true, Ordering::Relaxed);
         if let Some(listener) = self.listener.take() {
             let _ = listener.join();
         }
@@ -93,54 +76,17 @@ pub async fn start(requested: &str, options: Options) -> Result<Server> {
     );
     let device = runtime::booted_device(requested).await?;
     let bound = session::active(&device.udid)?;
-    let dimensions = ui::dimensions(&device.udid).await?;
+    let dimensions = native::dimensions(&device.udid).await?;
     let listener = TcpListener::bind(("127.0.0.1", options.port))?;
     listener.set_nonblocking(true)?;
     let address = listener.local_addr()?;
-
-    let mut command = Command::new(ui::bridge_path());
-    command
-        .args([
-            "stream-video",
-            "--format",
-            "mjpeg",
-            "--fps",
-            &options.fps.to_string(),
-            "--quality",
-            &options.quality.to_string(),
-            "--scale",
-            &options.scale.to_string(),
-            "--udid",
-            &device.udid,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    command.process_group(0);
     let started = Instant::now();
-    let mut child = command
-        .spawn()
-        .context("Could not start AXe video stream")?;
-    let group = child.id() as i32;
-    let stdout = child.stdout.take().context("AXe stream has no stdout")?;
-    let stderr = child.stderr.take().context("AXe stream has no stderr")?;
-    let frames = Arc::new((
-        Mutex::new(FrameState {
-            sequence: 0,
-            frame: Arc::from([]),
-            error: None,
-        }),
-        Condvar::new(),
-    ));
-    spawn_frame_reader(stdout, Arc::clone(&frames));
-    spawn_error_reader(stderr, Arc::clone(&frames));
-    wait_for_first_frame(&frames, Duration::from_secs(10))?;
-
-    let stopped = Arc::new(AtomicBool::new(false));
+    let video = native::video::start(&device.udid, options.fps, options.quality, options.scale)?;
+    let stopped = Arc::clone(&video.stopped);
     let listener_thread = spawn_listener(
         listener,
-        Arc::clone(&frames),
-        Arc::clone(&stopped),
+        Arc::clone(&video.frames),
+        stopped,
         device.udid.clone(),
         bound.id.clone(),
         dimensions,
@@ -155,99 +101,14 @@ pub async fn start(requested: &str, options: Options) -> Result<Server> {
             scale: options.scale,
             first_frame_ms: started.elapsed().as_millis(),
         },
-        child,
-        group,
-        stopped,
+        video,
         listener: Some(listener_thread),
     })
 }
 
-fn spawn_frame_reader(mut stdout: impl Read + Send + 'static, frames: Frames) {
-    thread::spawn(move || {
-        let mut pending = Vec::new();
-        let mut chunk = [0_u8; 64 * 1024];
-        loop {
-            match stdout.read(&mut chunk) {
-                Ok(0) => break,
-                Ok(count) => {
-                    pending.extend_from_slice(&chunk[..count]);
-                    while let Some(start) = marker(&pending, [0xff, 0xd8], 0) {
-                        let Some(end) = marker(&pending, [0xff, 0xd9], start + 2) else {
-                            if start > 0 {
-                                pending.drain(..start);
-                            }
-                            break;
-                        };
-                        let frame = Arc::from(&pending[start..end + 2]);
-                        pending.drain(..end + 2);
-                        let (state, changed) = &*frames;
-                        let mut state = state.lock().unwrap();
-                        state.sequence += 1;
-                        state.frame = frame;
-                        changed.notify_all();
-                    }
-                    if pending.len() > MAX_FRAME_BYTES {
-                        pending.clear();
-                    }
-                }
-                Err(error) => {
-                    set_error(&frames, error.to_string());
-                    return;
-                }
-            }
-        }
-        set_error(&frames, "AXe video stream ended".into());
-    });
-}
-
-fn spawn_error_reader(mut stderr: impl Read + Send + 'static, frames: Frames) {
-    thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.by_ref().take(8192).read_to_end(&mut bytes);
-        if !bytes.is_empty() {
-            set_error(&frames, String::from_utf8_lossy(&bytes).trim().to_owned());
-        }
-    });
-}
-
-fn marker(bytes: &[u8], marker: [u8; 2], from: usize) -> Option<usize> {
-    bytes[from..]
-        .windows(2)
-        .position(|window| window == marker)
-        .map(|index| index + from)
-}
-
-fn set_error(frames: &Frames, error: String) {
-    let (state, changed) = &**frames;
-    state.lock().unwrap().error = Some(error);
-    changed.notify_all();
-}
-
-fn wait_for_first_frame(frames: &Frames, timeout: Duration) -> Result<()> {
-    let (state, changed) = &**frames;
-    let deadline = Instant::now() + timeout;
-    let mut state = state.lock().unwrap();
-    while state.frame.is_empty() && state.error.is_none() {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            anyhow::bail!("AXe produced no video frame within 10 seconds");
-        }
-        state = changed.wait_timeout(state, remaining).unwrap().0;
-    }
-    if state.frame.is_empty() {
-        anyhow::bail!(
-            state
-                .error
-                .clone()
-                .unwrap_or_else(|| "AXe video stream failed".into())
-        );
-    }
-    Ok(())
-}
-
 fn spawn_listener(
     listener: TcpListener,
-    frames: Frames,
+    frames: native::video::Frames,
     stopped: Arc<AtomicBool>,
     device: String,
     session_id: String,
@@ -275,7 +136,7 @@ fn spawn_listener(
 
 fn handle(
     mut stream: TcpStream,
-    frames: Frames,
+    frames: native::video::Frames,
     device: &str,
     session_id: &str,
     dimensions: (f64, f64),
@@ -309,15 +170,15 @@ fn handle(
         }
         ("GET", "/stream.mjpg") => stream_frames(stream, frames),
         ("POST", "/api/tap") => {
-            control(device, session_id, body, Control::Tap)?;
+            control(device, session_id, body, Control::Tap, dimensions)?;
             response(&mut stream, 204, "text/plain", b"")
         }
         ("POST", "/api/swipe") => {
-            control(device, session_id, body, Control::Swipe)?;
+            control(device, session_id, body, Control::Swipe, dimensions)?;
             response(&mut stream, 204, "text/plain", b"")
         }
         ("POST", "/api/type") => {
-            control(device, session_id, body, Control::Type)?;
+            control(device, session_id, body, Control::Type, dimensions)?;
             response(&mut stream, 204, "text/plain", b"")
         }
         _ => response(&mut stream, 404, "text/plain", b"Not found"),
@@ -334,7 +195,7 @@ fn response(stream: &mut TcpStream, status: u16, content_type: &str, body: &[u8]
     Ok(())
 }
 
-fn stream_frames(mut stream: TcpStream, frames: Frames) -> Result<()> {
+fn stream_frames(mut stream: TcpStream, frames: native::video::Frames) -> Result<()> {
     stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: multipart/x-mixed-replace; boundary=frame\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n")?;
     let (state, changed) = &*frames;
     let mut sequence = 0;
@@ -385,7 +246,13 @@ enum Control {
     Type,
 }
 
-fn control(device: &str, expected_session: &str, body: &[u8], control: Control) -> Result<()> {
+fn control(
+    device: &str,
+    expected_session: &str,
+    body: &[u8],
+    control: Control,
+    dimensions: (f64, f64),
+) -> Result<()> {
     let bound = session::active(device)?;
     anyhow::ensure!(
         bound.id == expected_session,
@@ -396,19 +263,7 @@ fn control(device: &str, expected_session: &str, body: &[u8], control: Control) 
         Control::Tap => {
             let point: Point = serde_json::from_slice(body)?;
             finite(point.x, point.y)?;
-            command(
-                &ui::bridge_path(),
-                &[
-                    "tap",
-                    "-x",
-                    &point.x.to_string(),
-                    "-y",
-                    &point.y.to_string(),
-                    "--udid",
-                    device,
-                ],
-                None,
-            )?;
+            native::tap_at_blocking(device, point.x, point.y, dimensions.0, dimensions.1)?;
         }
         Control::Swipe => {
             let swipe: Swipe = serde_json::from_slice(body)?;
@@ -418,51 +273,30 @@ fn control(device: &str, expected_session: &str, body: &[u8], control: Control) 
                 (50..=5000).contains(&swipe.duration_ms),
                 "duration_ms must be 50..5000"
             );
-            command(
-                &ui::bridge_path(),
-                &[
-                    "swipe",
-                    "--start-x",
-                    &swipe.x1.to_string(),
-                    "--start-y",
-                    &swipe.y1.to_string(),
-                    "--end-x",
-                    &swipe.x2.to_string(),
-                    "--end-y",
-                    &swipe.y2.to_string(),
-                    "--duration",
-                    &(swipe.duration_ms as f64 / 1000.0).to_string(),
-                    "--udid",
-                    device,
-                ],
-                None,
+            native::swipe_blocking(
+                device,
+                swipe.x1,
+                swipe.y1,
+                swipe.x2,
+                swipe.y2,
+                swipe.duration_ms,
+                dimensions.0,
+                dimensions.1,
             )?;
         }
         Control::Type => {
             let text: Text = serde_json::from_slice(body)?;
             anyhow::ensure!(text.text.len() <= 16 * 1024, "Text is too long");
-            command(
-                &ui::bridge_path(),
-                &["type", "--stdin", "--udid", device],
-                Some(text.text.as_bytes()),
-            )?;
+            native::type_text_blocking(device, &text.text)?;
         }
     }
     Ok(())
 }
 
 fn check_foreground(device: &str, expected_pid: u32) -> Result<()> {
-    let output = Command::new(ui::bridge_path())
-        .args(["describe-ui", "--udid", device])
-        .output()?;
-    anyhow::ensure!(output.status.success(), "AXe UI inspection failed");
-    let roots: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let pid = roots
-        .as_array()
-        .and_then(|roots| roots.first())
-        .and_then(|root| root["pid"].as_u64());
+    let screen = native::inspect_blocking(device, Some(expected_pid))?;
     anyhow::ensure!(
-        pid == Some(u64::from(expected_pid)),
+        screen.pid == Some(expected_pid),
         "Foreground application changed; refusing browser input"
     );
     Ok(())
@@ -472,29 +306,6 @@ fn finite(x: f64, y: f64) -> Result<()> {
     anyhow::ensure!(
         x.is_finite() && y.is_finite() && x >= 0.0 && y >= 0.0 && x <= 4096.0 && y <= 4096.0,
         "Invalid coordinates"
-    );
-    Ok(())
-}
-
-fn command(program: &str, args: &[&str], input: Option<&[u8]>) -> Result<()> {
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    if let Some(input) = input {
-        child.stdin.take().unwrap().write_all(input)?;
-    }
-    let output = child.wait_with_output()?;
-    anyhow::ensure!(
-        output.status.success(),
-        "AXe input failed: {}",
-        String::from_utf8_lossy(&output.stderr)
     );
     Ok(())
 }

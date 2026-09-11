@@ -1,6 +1,6 @@
 # Benchmarks
 
-These measurements ran on September 8 and 9, 2026, using MxDemo on Apple Silicon, Xcode 26.5, iOS 26.5, and AXe 1.8.0. The Mac had 16 GiB of memory, other applications open, and existing swap use.
+These measurements ran on September 8 and 9, 2026, using MxDemo on Apple Silicon, Xcode 26.5, and iOS 26.5. The Mac had 16 GiB of memory, other applications open, and existing swap use.
 
 ## Capture flow
 

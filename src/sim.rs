@@ -2,6 +2,8 @@ use crate::process::{output, strings};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -42,8 +44,83 @@ pub async fn call(args: &[&str]) -> Result<String> {
     command.extend(strings(args));
     output("xcrun", &command).await
 }
+
+const LIST_CACHE_TTL: Duration = Duration::from_millis(250);
+
+struct ListCache {
+    at: Instant,
+    devices: Vec<Device>,
+}
+
+fn list_cache() -> &'static Mutex<Option<ListCache>> {
+    static CACHE: OnceLock<Mutex<Option<ListCache>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn list_cache_fresh(cached_at: Instant, now: Instant, ttl: Duration) -> bool {
+    now.saturating_duration_since(cached_at) < ttl
+}
+
+fn cached_list() -> Option<Vec<Device>> {
+    let cache = list_cache().lock().ok()?;
+    let cached = cache.as_ref()?;
+    list_cache_fresh(cached.at, Instant::now(), LIST_CACHE_TTL).then(|| cached.devices.clone())
+}
+
+fn store_list(devices: Vec<Device>) {
+    if let Ok(mut cache) = list_cache().lock() {
+        *cache = Some(ListCache {
+            at: Instant::now(),
+            devices,
+        });
+    }
+}
+
+fn invalidate_list_cache() {
+    if let Ok(mut cache) = list_cache().lock() {
+        *cache = None;
+    }
+}
+
+fn from_coresim(listed: Vec<crate::native::coresim::ListedDevice>) -> Vec<Device> {
+    let mut devices: Vec<Device> = listed
+        .into_iter()
+        .filter(|device| {
+            device.available
+                && device
+                    .runtime
+                    .starts_with("com.apple.CoreSimulator.SimRuntime.iOS-")
+        })
+        .map(|device| Device {
+            udid: device.udid,
+            name: device.name,
+            state: device.state,
+            is_available: true,
+            device_type_identifier: Some(device.device_type).filter(|value| !value.is_empty()),
+            runtime: device.runtime,
+        })
+        .collect();
+    devices.sort_by(|a, b| a.name.cmp(&b.name).then(a.udid.cmp(&b.udid)));
+    devices
+}
+
 pub async fn list() -> Result<Vec<Device>> {
-    parse_devices(&call(&["list", "devices", "available", "--json"]).await?)
+    let testing = std::env::var_os("MX_TEST_ROOT").is_some();
+    if !testing && let Some(devices) = cached_list() {
+        return Ok(devices);
+    }
+    let devices = if !testing && crate::native::coresim::list_supported() {
+        match tokio::task::spawn_blocking(crate::native::coresim::list_devices).await? {
+            Ok(listed) => from_coresim(listed),
+            Err(_) => parse_devices(&call(&["list", "devices", "available", "--json"]).await?)?,
+        }
+    } else {
+        parse_devices(&call(&["list", "devices", "available", "--json"]).await?)?
+    };
+    if !testing {
+        store_list(devices.clone());
+    }
+    Ok(devices)
 }
 
 pub fn select(devices: &[Device], requested: Option<&str>) -> Result<Device> {
@@ -189,6 +266,7 @@ pub async fn boot_with_budget(
             budget.allows(current)?;
         }
         call(&["boot", &device.udid]).await?;
+        invalidate_list_cache();
         if budget.is_some() {
             call(&["bootstatus", &device.udid, "-b"]).await?;
             return Ok(());
@@ -222,6 +300,16 @@ mod tests {
         assert!(select(&[a.clone(), b.clone()], Some("Phone")).is_err());
         assert!(select(&[a.clone(), b.clone()], None).is_err());
         assert_eq!(select(&[a, b], Some("2")).unwrap().udid, "2");
+    }
+
+    #[test]
+    fn list_cache_expires_after_ttl() {
+        let at = Instant::now();
+        let ttl = LIST_CACHE_TTL;
+        assert!(list_cache_fresh(at, at, ttl));
+        assert!(list_cache_fresh(at, at + Duration::from_millis(249), ttl));
+        assert!(!list_cache_fresh(at, at + ttl, ttl));
+        assert!(!list_cache_fresh(at, at + Duration::from_millis(400), ttl));
     }
 }
 

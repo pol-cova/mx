@@ -12,13 +12,13 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --check
 ```
 
-The Rust tests use fixtures and small command-line programs to cover Xcode and AXe responses. Changes to simulator behavior also need an integration run on macOS with Xcode and AXe. Include the device type, runtime version, commands, and result in your pull request. Write new host utilities in Rust or Swift.
+The Rust tests use fixtures and small command-line programs to cover Xcode and simulator responses. Changes to simulator behavior also need an integration run on macOS with Xcode and a built `mx-guest`. Include the device type, runtime version, commands, and result in your pull request. Write new host utilities in Rust. Write simulator-side helpers in Objective-C.
 
 Keep changes focused. Add a regression test when fixing behavior. For performance claims, include sample counts, median and tail latency, the measurement method, and enough evidence to reproduce the result. See [benchmarks](benchmarks/README.md).
 
 ## Reporting a bug
 
-Include your Mx revision, macOS/Xcode/AXe versions, simulator model and runtime, reproduction steps, expected behavior, and actual behavior. Attach relevant diagnostics or screenshots after removing private data.
+Include your Mx revision, macOS/Xcode versions, simulator model and runtime, reproduction steps, expected behavior, and actual behavior. Attach relevant diagnostics or screenshots after removing private data.
 
 ## Licenses
 

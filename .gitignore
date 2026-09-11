@@ -1,6 +1,13 @@
 /target/
 .mx/
 .DS_Store
+
+# In-simulator helper is built by scripts/setup-native.sh
+/guest/mx-guest
+/guest/Frameworks/
+/guest/MxGuest.app/
+/guest/_CodeSignature/
+/guest/Info.plist
 __pycache__/
 *.pyc
 

@@ -14,7 +14,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Check Xcode, CoreSimulator, and AXe using the real local tools.
+    /// Check Xcode, CoreSimulator, and the native mx-guest transport.
     Doctor,
     /// Serve agent tools using MCP over stdin/stdout.
     Mcp,
@@ -152,7 +152,7 @@ enum Commands {
         /// New PNG path. Defaults to .mx/screenshots/<timestamp>-<device>.png.
         output: Option<PathBuf>,
     },
-    /// Read compact semantic UI state using AXe.
+    /// Read compact semantic UI state using the native guest.
     Ui {
         #[arg(long)]
         device: String,
@@ -187,13 +187,11 @@ async fn execute(cli: Cli) -> Result<()> {
         Commands::Doctor => {
             let xcode = process::output("xcodebuild", &["-version".into()]).await?;
             let simulators = sim::list().await?;
-            let axe_path = ui::bridge_path();
-            let axe = process::output(&axe_path, &["--version".into()]).await?;
+            let native = mx::native::doctor()?;
             print(serde_json::json!({
-                "ready": true,
+                "ready": native["ready"] == true,
                 "xcode": xcode.trim(),
-                "axe": axe.trim(),
-                "axe_path": axe_path,
+                "native": native,
                 "simulators": simulators,
                 "state_dir": session::root()?
             }))?;
@@ -245,7 +243,7 @@ async fn execute(cli: Cli) -> Result<()> {
                 "args": ["mcp"]
             });
             let mut env = serde_json::Map::new();
-            for key in ["MX_AXE_PATH", "MX_STATE_DIR"] {
+            for key in ["MX_GUEST_PATH", "MX_STATE_DIR"] {
                 if let Ok(value) = std::env::var(key) {
                     env.insert(key.into(), value.into());
                 }

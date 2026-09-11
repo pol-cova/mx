@@ -19,7 +19,7 @@ Reuse an installed app without rebuilding. Read semantic state changes without r
 | Simulator footprint, stock → slim | **3,429 → 1,077 MiB** |
 | Later optimized profile, idle | **832 MiB** median |
 
-Measured on Apple Silicon with Xcode 26.5, iOS 26.5, and AXe 1.8.0. The linked benchmark report includes the commands, raw results, and measurement boundaries.
+Measured on Apple Silicon with Xcode 26.5, iOS 26.5. The linked benchmark report includes the commands, raw results, and measurement boundaries.
 
 [Raw samples, methodology, and fleet results →](benchmarks/README.md)
 
@@ -34,7 +34,7 @@ sh scripts/install.sh
 mx doctor
 ```
 
-The installer builds Mx and downloads checksum-verified AXe 1.8.0. Keep your Cargo bin directory on `PATH` and allow 2 GiB free for the build.
+The installer builds Mx and the simulator-side `mx-guest` helper. Keep your Cargo bin directory on `PATH` and allow 2 GiB free for the build.
 
 ## Connect your agent
 
@@ -71,14 +71,15 @@ Choose a device from `mx devices` and an element identifier from `mx ui`. Use `m
 mx web --device SIMULATOR_UDID
 ```
 
-Open the printed URL in your editor or browser and leave the command running. Mx streams directly from AXe, with pointer and text input. No separate streaming service is required. The server is localhost-only; this URL is not an MCP endpoint.
+Open the printed URL in your editor or browser and leave the command running. Mx streams simulator frames with pointer and text input. No separate streaming service is required. The server is localhost-only; this URL is not an MCP endpoint.
 
 ## How it works
 
 ```text
 Agent → MCP / Rust CLI → Xcode         build and diagnostics
                       → CoreSimulator install, launch, and logs
-                      → AXe           semantic tree, input, and video
+                      → mx-guest      semantic tree and AX actions
+                      → CoreSimulator HID and framebuffer
 ```
 
 Mx tracks the device, app process, and UI revisions in a session. Semantic actions check the foreground app and reject stale references. Action requests can wait for an expected label; a standalone tap does not verify the whole task.
@@ -96,4 +97,4 @@ Mx runs against local iOS simulators. Semantic inspection uses the accessibility
 
 ## License
 
-[MIT](LICENSE). Uses [AXe](https://github.com/cameroncooke/AXe) and service mappings derived in part from [simslim](https://github.com/MobAI-App/simslim). See [third-party notices](THIRD_PARTY_NOTICES.md).
+[MIT](LICENSE). Uses a native CoreSimulator transport and service mappings derived in part from [simslim](https://github.com/MobAI-App/simslim). See [third-party notices](THIRD_PARTY_NOTICES.md).

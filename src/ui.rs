@@ -1,5 +1,5 @@
-use crate::process::{self, strings};
-use anyhow::{Context, Result, bail};
+use crate::native;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -7,6 +7,12 @@ use serde_json::Value;
 pub struct Screen {
     pub device: String,
     pub pid: Option<u32>,
+    #[serde(default)]
+    pub width: f64,
+    #[serde(default)]
+    pub height: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
     pub elements: Vec<Element>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -20,6 +26,10 @@ pub struct Element {
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<u32>,
+    #[serde(default, skip_serializing)]
+    pub frame: Option<[f64; 4]>,
 }
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -56,39 +66,7 @@ impl Selector {
             && self.role.as_ref().is_none_or(|s| &element.role == s)
     }
 }
-fn resolve_bridge(override_path: Option<String>, home: Option<std::path::PathBuf>) -> String {
-    if let Some(path) = override_path {
-        return path;
-    }
-    if let Some(home) = home {
-        let path = home.join("Library/Application Support/Mx/tools/axe-1.8.0/axe");
-        use std::os::unix::fs::PermissionsExt;
-        if path
-            .metadata()
-            .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
-        {
-            return path.to_string_lossy().into_owned();
-        }
-    }
-    "axe".into()
-}
 
-pub fn bridge_path() -> String {
-    resolve_bridge(
-        std::env::var("MX_AXE_PATH").ok(),
-        std::env::var_os("HOME").map(std::path::PathBuf::from),
-    )
-}
-
-pub(crate) async fn batch_steps(device: &str, steps: &[String]) -> Result<()> {
-    let mut args = strings(&["batch", "--udid", device, "--ax-cache", "perStep"]);
-    for step in steps {
-        args.push("--step".into());
-        args.push(step.clone());
-    }
-    process::output(&bridge_path(), &args).await?;
-    Ok(())
-}
 fn scalar(value: &Value) -> Option<String> {
     match value {
         Value::String(s) if !s.trim().is_empty() => Some(s.clone()),
@@ -99,18 +77,17 @@ fn scalar(value: &Value) -> Option<String> {
 
 pub fn parse_elements(json: &str) -> Result<Vec<Element>> {
     let roots: Value =
-        serde_json::from_str(json).context("AXe returned invalid accessibility JSON")?;
+        serde_json::from_str(json).context("Guest returned invalid accessibility JSON")?;
     let roots = roots
         .as_array()
-        .context("AXe accessibility response must be an array")?;
+        .context("Accessibility response must be an array")?;
     fn visit(node: &Value, result: &mut Vec<Element>) -> Result<()> {
-        anyhow::ensure!(
-            node.is_object(),
-            "AXe accessibility element must be an object"
-        );
-        let label = scalar(&node["AXLabel"]);
-        let identifier = scalar(&node["AXUniqueId"]).or_else(|| scalar(&node["AXIdentifier"]));
-        let value = scalar(&node["AXValue"]);
+        anyhow::ensure!(node.is_object(), "Accessibility element must be an object");
+        let label = scalar(&node["AXLabel"]).or_else(|| scalar(&node["label"]));
+        let identifier = scalar(&node["AXUniqueId"])
+            .or_else(|| scalar(&node["AXIdentifier"]))
+            .or_else(|| scalar(&node["identifier"]));
+        let value = scalar(&node["AXValue"]).or_else(|| scalar(&node["value"]));
         if label.is_some() || identifier.is_some() || value.is_some() {
             result.push(Element {
                 reference: None,
@@ -120,13 +97,12 @@ pub fn parse_elements(json: &str) -> Result<Vec<Element>> {
                 label,
                 identifier,
                 value,
+                index: None,
+                frame: None,
             });
         }
         if let Some(children) = node.get("children").filter(|v| !v.is_null()) {
-            for child in children
-                .as_array()
-                .context("AXe children must be an array")?
-            {
+            for child in children.as_array().context("children must be an array")? {
                 visit(child, result)?;
             }
         }
@@ -139,113 +115,25 @@ pub fn parse_elements(json: &str) -> Result<Vec<Element>> {
     Ok(elements)
 }
 
-async fn describe(device: &str) -> Result<String> {
-    process::output(
-        &bridge_path(),
-        &strings(&["describe-ui", "--udid", device]),
-    )
-    .await
-    .context("UI inspection requires AXe. Run sh scripts/setup-axe.sh from the Mx checkout, install AXe on PATH, or set MX_AXE_PATH")
-}
-
 pub async fn dimensions(device: &str) -> Result<(f64, f64)> {
-    let raw: Value = serde_json::from_str(&describe(device).await?)?;
-    let frame = raw
-        .as_array()
-        .and_then(|roots| roots.first())
-        .and_then(|root| root.get("frame"))
-        .context("AXe UI root has no frame")?;
-    let width = frame["width"].as_f64().context("AXe frame has no width")?;
-    let height = frame["height"]
-        .as_f64()
-        .context("AXe frame has no height")?;
-    anyhow::ensure!(
-        width > 0.0 && height > 0.0,
-        "AXe returned invalid screen dimensions"
-    );
-    Ok((width, height))
+    native::dimensions(device).await
 }
 
 pub async fn inspect(device: &str) -> Result<Screen> {
-    let raw = describe(device).await?;
-    Ok(Screen {
-        device: device.into(),
-        pid: serde_json::from_str::<Value>(&raw)?
-            .as_array()
-            .and_then(|a| a.first())
-            .and_then(|n| n["pid"].as_u64())
-            .and_then(|p| u32::try_from(p).ok()),
-        elements: parse_elements(&raw)?,
-    })
+    native::inspect(device).await
 }
+
 pub async fn tap(device: &str, selector: Selector) -> Result<()> {
     let screen = inspect(device).await?;
     tap_on_screen(&screen, selector).await
 }
+
 pub async fn tap_on_screen(screen: &Screen, selector: Selector) -> Result<()> {
-    selector.validate()?;
-    let device = &screen.device;
-    let matches = screen
-        .elements
-        .iter()
-        .filter(|e| selector.matches(e))
-        .count();
-    if matches != 1 {
-        bail!(
-            "UI selector matched {matches} elements; inspect again and use a unique identifier or role"
-        );
-    }
-    let mut args = strings(&["tap", "--udid", device]);
-    if let Some(id) = selector.identifier {
-        args.push(format!("--id={id}"));
-    }
-    if let Some(label) = selector.label {
-        args.push(format!("--label={label}"));
-    }
-    if let Some(role) = selector.role {
-        args.push(format!("--element-type={role}"));
-    }
-    process::output(&bridge_path(), &args).await?;
-    Ok(())
+    native::tap_on_screen(screen, selector).await
 }
+
 pub async fn type_text(device: &str, text: &str) -> Result<()> {
-    anyhow::ensure!(
-        text.len() <= 16 * 1024,
-        "Text input is limited to 16 KiB per call"
-    );
-    anyhow::ensure!(
-        text.chars()
-            .all(|c| !c.is_control() || matches!(c, '\n' | '\r' | '\t')),
-        "Text contains unsupported control characters"
-    );
-    if !text.is_ascii() {
-        process::input(
-            "xcrun",
-            &strings(&["simctl", "pbcopy", device]),
-            text.as_bytes(),
-        )
-        .await?;
-        process::output(
-            &bridge_path(),
-            &strings(&[
-                "key-combo",
-                "--modifiers",
-                "227",
-                "--key",
-                "25",
-                "--udid",
-                device,
-            ]),
-        )
-        .await?;
-        return Ok(());
-    }
-    process::input(
-        &bridge_path(),
-        &strings(&["type", "--stdin", "--udid", device]),
-        text.as_bytes(),
-    )
-    .await
+    native::type_text(device, text).await
 }
 
 #[cfg(test)]
@@ -284,33 +172,5 @@ mod tests {
             .validate()
             .is_err()
         );
-    }
-}
-
-#[cfg(test)]
-mod bridge_discovery_tests {
-    use super::resolve_bridge;
-    use std::os::unix::fs::PermissionsExt;
-
-    #[test]
-    fn discovers_user_install_without_cwd_or_path_and_preserves_override() {
-        let home = tempfile::tempdir().unwrap();
-        let path = home
-            .path()
-            .join("Library/Application Support/Mx/tools/axe-1.8.0/axe");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-        assert_eq!(resolve_bridge(None, Some(home.path().into())), "axe");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert_eq!(
-            resolve_bridge(None, Some(home.path().into())),
-            path.to_str().unwrap()
-        );
-        assert_eq!(
-            resolve_bridge(Some("/custom/axe".into()), Some(home.path().into())),
-            "/custom/axe"
-        );
-        assert_eq!(resolve_bridge(None, None), "axe");
     }
 }

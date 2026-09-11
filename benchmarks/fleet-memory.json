@@ -3,7 +3,7 @@
   "host_memory_gib": 16,
   "xcode_version": "26.5",
   "ios_version": "26.5",
-  "axe_version": "1.8.0",
+  "transport": "legacy-cli",
   "simulators": 2,
   "profile": "slim",
   "app": "MxDemo",

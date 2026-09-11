@@ -23,6 +23,11 @@ tempfile = "3"
 libc = "0.2"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
+objc2 = { version = "0.6", features = ["exception"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSError", "NSString", "NSObject", "NSUUID"] }
+block2 = "0.6"
+jpeg-encoder = "0.6"
+png = "0.17"
 
 [profile.dev]
 debug = 0
