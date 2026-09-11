@@ -28,10 +28,10 @@ pub struct Element {
     pub value: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index: Option<u32>,
-    #[serde(default, skip_serializing)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frame: Option<[f64; 4]>,
 }
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Selector {
     /// Accessibility identifier from mx_ui. Provide exactly one of identifier or label.

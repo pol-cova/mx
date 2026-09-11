@@ -18,7 +18,7 @@ use objc2_foundation::NSString;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, c_void};
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -140,6 +140,7 @@ pub fn inspect(device: &str, pid: Option<u32>) -> Result<Screen> {
     );
     XPC_SENDS.store(0, Ordering::SeqCst);
     XPC_REPLIES.store(0, Ordering::SeqCst);
+    MULTIPLE_ATTRIBUTE_OK.store(true, Ordering::Relaxed);
     super::dyld::load()?;
     let sim = super::coresim::device_by_udid(device)?;
     let translator = shared_translator()?;
@@ -254,6 +255,10 @@ fn exception_message(exception: Option<Retained<Exception>>) -> String {
 /// (`AXPAttributeChildren`, role, identifier, …). Type 2 without an
 /// attribute type returns a non-zero error; we never treat that as data.
 const REQUEST_TYPE_ATTRIBUTE: u64 = 2;
+/// `processMultipleAttributeRequest:` — `parameters[@"attributes"]` is an
+/// array of AXP codes, serviced with one `AXUIElementCopyMultipleAttributeValues`.
+const REQUEST_TYPE_MULTIPLE_ATTRIBUTE: u64 = 5;
+static MULTIPLE_ATTRIBUTE_OK: AtomicBool = AtomicBool::new(true);
 
 fn inspect_with_token(
     translator: &AnyObject,
@@ -370,6 +375,15 @@ fn same_translation(left: &AnyObject, right: &AnyObject) -> bool {
     (left_key != 0 && left_key == right_key) || std::ptr::eq(left, right)
 }
 
+struct WalkState<'a> {
+    translator: &'a AnyObject,
+    token: &'a AnyObject,
+    types: &'a AttrTypes,
+    root_frame: CGRect,
+    point_size: CGSize,
+    seen: &'a mut HashSet<u64>,
+}
+
 fn walk_translation(
     translator: &AnyObject,
     token: &AnyObject,
@@ -382,27 +396,27 @@ fn walk_translation(
         stamp_element_token(element, token);
     }
     let types = AttrTypes::from_element(element.as_deref());
-    let root_frame = element
-        .as_ref()
-        .and_then(|element| read_frame(element))
-        .or_else(|| {
-            types.frame.and_then(|attr| {
-                attribute_result(token, translation, attr).and_then(|value| value_to_rect(&value))
-            })
-        })
+    let attrs = attribute_map(token, translation, &types);
+    let root_frame = types
+        .frame
+        .and_then(|attr| attrs.get(&attr).and_then(|value| value_to_rect(value)))
+        .or_else(|| element.as_ref().and_then(|element| read_frame(element)))
         .unwrap_or_default();
     let mut seen = HashSet::new();
     let mut nodes = Vec::new();
     collect_from_translation(
-        translator,
-        token,
+        &mut WalkState {
+            translator,
+            token,
+            types: &types,
+            root_frame,
+            point_size,
+            seen: &mut seen,
+        },
         translation,
         element.as_deref(),
-        &types,
-        &root_frame,
-        point_size,
+        Some(attrs),
         0,
-        &mut seen,
         &mut nodes,
     );
     (nodes, root_frame, seen)
@@ -739,111 +753,83 @@ fn stamp_element_token(element: &AnyObject, token: &AnyObject) {
 }
 
 fn collect_from_translation(
-    translator: &AnyObject,
-    token: &AnyObject,
+    state: &mut WalkState<'_>,
     translation: &AnyObject,
     element: Option<&AnyObject>,
-    types: &AttrTypes,
-    root_frame: &CGRect,
-    point_size: CGSize,
+    cached: Option<HashMap<u64, Retained<AnyObject>>>,
     depth: usize,
-    seen: &mut HashSet<u64>,
     out: &mut Vec<AptNode>,
 ) {
-    if depth > MAX_DEPTH || out.len() >= MAX_ELEMENTS {
+    if depth > MAX_DEPTH || state.seen.len() >= MAX_ELEMENTS {
         return;
     }
     let Some((translation, element)) =
-        as_translation_and_element(translator, token, translation, element)
+        as_translation_and_element(state.translator, state.token, translation, element)
     else {
         return;
     };
-    stamp_token(&translation, token);
-    if !seen.insert(seen_key(&translation, element.as_deref())) {
+    stamp_token(&translation, state.token);
+    if !state
+        .seen
+        .insert(seen_key(&translation, element.as_deref()))
+    {
         return;
     }
-    let role = normalize_role(
-        types
-            .role
-            .and_then(|attr| attribute_string_result(token, &translation, attr))
-            .or_else(|| {
-                element
-                    .as_ref()
-                    .and_then(|element| read_string(element, "accessibilityRole"))
+    let attrs = cached.unwrap_or_else(|| attribute_map(state.token, &translation, state.types));
+    let role = normalize_role(map_string(&attrs, state.types.role).or_else(|| {
+        element.as_ref().and_then(|element| {
+            read_string(element, "accessibilityRole")
+                .or_else(|| read_string(element, "role"))
+                .or_else(|| attribute_string(element, "AXRole"))
+        })
+    }));
+    let identifier = map_string(&attrs, state.types.identifier).or_else(|| {
+        element.as_ref().and_then(|element| {
+            attribute_string(element, "AXIdentifier")
+                .or_else(|| attribute_string(element, "AXUniqueId"))
+        })
+    });
+    let label = map_string(&attrs, state.types.label)
+        .or_else(|| map_string(&attrs, state.types.title))
+        .or_else(|| map_string(&attrs, state.types.description))
+        .or_else(|| {
+            element.as_ref().and_then(|element| {
+                read_string(element, "accessibilityLabel")
+                    .or_else(|| attribute_string(element, "AXLabel"))
             })
-            .or_else(|| {
-                element
-                    .as_ref()
-                    .and_then(|element| read_string(element, "role"))
-            })
-            .or_else(|| {
-                element
-                    .as_ref()
-                    .and_then(|element| attribute_string(element, "AXRole"))
-            }),
+        });
+    let value = map_string(&attrs, state.types.value).or_else(|| {
+        element
+            .as_ref()
+            .and_then(|element| attribute_string(element, "AXValue"))
+    });
+    let frame = state
+        .types
+        .frame
+        .and_then(|attr| {
+            attrs
+                .get(&attr)
+                .and_then(|value| value_to_rect(value))
+                .or_else(|| {
+                    attribute_result(state.token, &translation, attr)
+                        .and_then(|value| value_to_rect(&value))
+                })
+        })
+        .or_else(|| element.as_ref().and_then(|element| read_frame(element)))
+        .map(|frame| project_frame(frame, state.root_frame, state.point_size));
+    let children = child_translations(
+        state.translator,
+        state.token,
+        &translation,
+        element.as_deref(),
+        state
+            .types
+            .children
+            .and_then(|attr| attrs.get(&attr).cloned()),
     );
-    let identifier = types
-        .identifier
-        .and_then(|attr| attribute_string_result(token, &translation, attr))
-        .or_else(|| {
-            element
-                .as_ref()
-                .and_then(|element| attribute_string(element, "AXIdentifier"))
-        })
-        .or_else(|| {
-            element
-                .as_ref()
-                .and_then(|element| attribute_string(element, "AXUniqueId"))
-        });
-    let label = ["AXLabel", "AXTitle", "AXDescription"]
-        .iter()
-        .find_map(|name| {
-            mac_attr_type(element.as_deref(), name)
-                .filter(|attr| *attr != 0)
-                .and_then(|attr| attribute_string_result(token, &translation, attr))
-        })
-        .or_else(|| {
-            element
-                .as_ref()
-                .and_then(|element| read_string(element, "accessibilityLabel"))
-        })
-        .or_else(|| {
-            element
-                .as_ref()
-                .and_then(|element| attribute_string(element, "AXLabel"))
-        });
-    let value = types
-        .value
-        .and_then(|attr| attribute_string_result(token, &translation, attr))
-        .or_else(|| {
-            element
-                .as_ref()
-                .and_then(|element| attribute_string(element, "AXValue"))
-        });
-    let frame = element
-        .as_ref()
-        .and_then(|element| read_frame(element))
-        .or_else(|| {
-            types.frame.and_then(|attr| {
-                attribute_result(token, &translation, attr).and_then(|value| value_to_rect(&value))
-            })
-        })
-        .map(|frame| project_frame(frame, *root_frame, point_size));
-    let children = child_translations(translator, token, &translation, element.as_deref(), types);
     let mut child_nodes = Vec::new();
     for child in children {
-        collect_from_translation(
-            translator,
-            token,
-            &child,
-            None,
-            types,
-            root_frame,
-            point_size,
-            depth + 1,
-            seen,
-            &mut child_nodes,
-        );
+        collect_from_translation(state, &child, None, None, depth + 1, &mut child_nodes);
     }
     out.push(AptNode {
         role,
@@ -859,6 +845,9 @@ struct AttrTypes {
     children: Option<u64>,
     role: Option<u64>,
     identifier: Option<u64>,
+    label: Option<u64>,
+    title: Option<u64>,
+    description: Option<u64>,
     frame: Option<u64>,
     value: Option<u64>,
 }
@@ -869,9 +858,34 @@ impl AttrTypes {
             children: mac_attr_type(element, "AXChildren").or(Some(8)),
             role: mac_attr_type(element, "AXRole").or(Some(45)),
             identifier: mac_attr_type(element, "AXIdentifier").or(Some(25)),
+            label: mac_attr_type(element, "AXLabel"),
+            title: mac_attr_type(element, "AXTitle"),
+            description: mac_attr_type(element, "AXDescription"),
             frame: mac_attr_type(element, "AXFrame").or(Some(21)),
             value: mac_attr_type(element, "AXValue").or(Some(53)),
         }
+    }
+
+    fn all_codes(&self) -> Vec<u64> {
+        let mut codes = Vec::new();
+        for code in [
+            self.children,
+            self.role,
+            self.identifier,
+            self.label,
+            self.title,
+            self.description,
+            self.value,
+            self.frame,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if code != 0 && !codes.contains(&code) {
+                codes.push(code);
+            }
+        }
+        codes
     }
 }
 
@@ -885,12 +899,152 @@ fn mac_attr_type(element: Option<&AnyObject>, name: &str) -> Option<u64> {
     (ty != 0).then_some(ty)
 }
 
-fn attribute_string_result(
+fn map_string(map: &HashMap<u64, Retained<AnyObject>>, attr: Option<u64>) -> Option<String> {
+    attr.and_then(|code| map.get(&code))
+        .and_then(|value| ax_string(value))
+}
+
+fn attribute_map(
     token: &AnyObject,
     translation: &AnyObject,
-    attr: u64,
-) -> Option<String> {
-    attribute_result(token, translation, attr).and_then(|value| ax_string(&value))
+    types: &AttrTypes,
+) -> HashMap<u64, Retained<AnyObject>> {
+    let codes = types.all_codes();
+    if codes.is_empty() {
+        return HashMap::new();
+    }
+    if multiple_attribute_enabled() {
+        match multiple_attribute_result(token, translation, &codes) {
+            Some(map) if !map.is_empty() => return map,
+            _ => MULTIPLE_ATTRIBUTE_OK.store(false, Ordering::Relaxed),
+        }
+    }
+    let mut map = HashMap::new();
+    for code in codes {
+        if let Some(value) = attribute_result(token, translation, code) {
+            map.insert(code, value);
+        }
+    }
+    map
+}
+
+fn multiple_attribute_enabled() -> bool {
+    MULTIPLE_ATTRIBUTE_OK.load(Ordering::Relaxed) && multiple_attribute_capable()
+}
+
+fn multiple_attribute_capable() -> bool {
+    static CACHED: OnceLock<bool> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        AnyClass::get(c"AXPTranslatorRequest")
+            .is_some_and(|request| method_matches(request, c"setParameters:", b'v', 3))
+    })
+}
+
+fn multiple_attribute_result(
+    token: &AnyObject,
+    translation: &AnyObject,
+    codes: &[u64],
+) -> Option<HashMap<u64, Retained<AnyObject>>> {
+    let request = make_multiple_attribute_request(translation, codes)?;
+    let token_key = token_string(token as *const AnyObject as *mut AnyObject);
+    let response =
+        send_accessibility_request(&token_key, Retained::as_ptr(&request) as *mut AnyObject)?;
+    if instance_responds(&response, c"error") {
+        let error: u64 = unsafe { msg_send![&response, error] };
+        if error != 0 {
+            return None;
+        }
+    }
+    let data = response_result(&response)?;
+    decode_multiple_result(&data, codes)
+}
+
+fn make_multiple_attribute_request(
+    translation: &AnyObject,
+    codes: &[u64],
+) -> Option<Retained<AnyObject>> {
+    let class = AnyClass::get(c"AXPTranslatorRequest")?;
+    let request: Option<Retained<AnyObject>> =
+        unsafe { msg_send![class, requestWithTranslation: translation] };
+    let request = request?;
+    if !instance_responds(&request, c"setParameters:") {
+        return None;
+    }
+    let _: () = unsafe { msg_send![&*request, setRequestType: REQUEST_TYPE_MULTIPLE_ATTRIBUTE] };
+    let params = attribute_parameters(codes)?;
+    let _: () = unsafe { msg_send![&*request, setParameters: &*params] };
+    Some(request)
+}
+
+fn attribute_parameters(codes: &[u64]) -> Option<Retained<AnyObject>> {
+    let array: Retained<AnyObject> =
+        unsafe { msg_send![class!(NSMutableArray), arrayWithCapacity: codes.len()] };
+    for code in codes {
+        let number: Retained<AnyObject> =
+            unsafe { msg_send![class!(NSNumber), numberWithUnsignedLongLong: *code] };
+        let _: () = unsafe { msg_send![&*array, addObject: &*number] };
+    }
+    let key = NSString::from_str("attributes");
+    unsafe { msg_send![class!(NSDictionary), dictionaryWithObject: &*array, forKey: &*key] }
+}
+
+fn decode_multiple_result(
+    data: &AnyObject,
+    codes: &[u64],
+) -> Option<HashMap<u64, Retained<AnyObject>>> {
+    if is_kind(data, "NSDictionary") {
+        return Some(dictionary_entries(data));
+    }
+    if is_kind(data, "NSArray") {
+        let items = nsarray_items(data);
+        if items.len() != codes.len() {
+            return None;
+        }
+        let mut map = HashMap::new();
+        for (code, value) in codes.iter().copied().zip(items) {
+            if !is_null_object(&value) {
+                map.insert(code, value);
+            }
+        }
+        return Some(map);
+    }
+    None
+}
+
+fn dictionary_entries(dict: &AnyObject) -> HashMap<u64, Retained<AnyObject>> {
+    let mut map = HashMap::new();
+    let keys: Option<Retained<AnyObject>> = unsafe { msg_send![dict, allKeys] };
+    let Some(keys) = keys else {
+        return map;
+    };
+    for key in nsarray_items(&keys) {
+        let Some(code) = dictionary_key_code(&key) else {
+            continue;
+        };
+        let value: *mut AnyObject = unsafe { msg_send![dict, objectForKey: &*key] };
+        let Some(value) = (unsafe { Retained::retain(value) }) else {
+            continue;
+        };
+        if !is_null_object(&value) {
+            map.insert(code, value);
+        }
+    }
+    map
+}
+
+fn dictionary_key_code(key: &AnyObject) -> Option<u64> {
+    if is_kind(key, "NSNumber") {
+        let code: u64 = unsafe { msg_send![key, unsignedLongLongValue] };
+        return (code != 0).then_some(code);
+    }
+    object_to_string(key)?
+        .parse()
+        .ok()
+        .filter(|code| *code != 0)
+}
+
+fn is_null_object(value: &AnyObject) -> bool {
+    is_kind(value, "NSNull")
 }
 
 fn ax_string(value: &AnyObject) -> Option<String> {
@@ -955,15 +1109,14 @@ fn response_result(response: &AnyObject) -> Option<Retained<AnyObject>> {
 fn child_translations(
     translator: &AnyObject,
     token: &AnyObject,
-    translation: &AnyObject,
+    _translation: &AnyObject,
     element: Option<&AnyObject>,
-    types: &AttrTypes,
+    children_value: Option<Retained<AnyObject>>,
 ) -> Vec<Retained<AnyObject>> {
     let mut children = Vec::new();
-    if let Some(attr) = types.children {
-        if let Some(value) = attribute_result(token, translation, attr) {
-            append_child_value(translator, token, Some(value), &mut children);
-        }
+    if let Some(value) = children_value {
+        append_child_value(translator, token, Some(value), &mut children);
+        return children;
     }
     if let Some(element) = element {
         append_child_value(
@@ -1052,13 +1205,77 @@ fn element_translation(element: &AnyObject) -> Option<Retained<AnyObject>> {
 fn value_to_rect(value: &AnyObject) -> Option<CGRect> {
     if instance_responds(value, c"rectValue") {
         let frame: CGRect = unsafe { msg_send![value, rectValue] };
-        return Some(frame);
+        if non_zero_rect(frame) {
+            return Some(frame);
+        }
     }
     if instance_responds(value, c"CGRectValue") {
         let frame: CGRect = unsafe { msg_send![value, CGRectValue] };
+        if non_zero_rect(frame) {
+            return Some(frame);
+        }
+    }
+    if let Some(frame) = dictionary_rect(value) {
         return Some(frame);
     }
-    None
+    let description: Option<Retained<NSString>> = unsafe { msg_send![value, description] };
+    description
+        .map(|value| value.to_string())
+        .as_deref()
+        .and_then(parse_rect_string)
+}
+
+fn non_zero_rect(frame: CGRect) -> bool {
+    frame.size.width != 0.0
+        || frame.size.height != 0.0
+        || frame.origin.x != 0.0
+        || frame.origin.y != 0.0
+}
+
+fn dictionary_rect(value: &AnyObject) -> Option<CGRect> {
+    if !is_kind(value, "NSDictionary") {
+        return None;
+    }
+    let number = |key: &str| -> Option<f64> {
+        let key = NSString::from_str(key);
+        let item: *mut AnyObject = unsafe { msg_send![value, objectForKey: &*key] };
+        let item = unsafe { Retained::retain(item) }?;
+        if is_kind(&item, "NSNumber") {
+            let n: f64 = unsafe { msg_send![&item, doubleValue] };
+            return Some(n);
+        }
+        object_to_string(&item)?.parse().ok()
+    };
+    let x = number("x").or_else(|| number("X"))?;
+    let y = number("y").or_else(|| number("Y"))?;
+    let width = number("width").or_else(|| number("Width"))?;
+    let height = number("height").or_else(|| number("Height"))?;
+    Some(CGRect {
+        origin: CGPoint { x, y },
+        size: CGSize { width, height },
+    })
+}
+
+fn parse_rect_string(text: &str) -> Option<CGRect> {
+    let nums: Vec<f64> = text
+        .split(|c: char| !matches!(c, '0'..='9' | '.' | '-' | '+'))
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    if nums.len() < 4 {
+        return None;
+    }
+    let frame = CGRect {
+        origin: CGPoint {
+            x: nums[0],
+            y: nums[1],
+        },
+        size: CGSize {
+            width: nums[2],
+            height: nums[3],
+        },
+    };
+    non_zero_rect(frame).then_some(frame)
 }
 
 fn hit_test_elements(
@@ -1566,6 +1783,24 @@ mod tests {
         assert_eq!(hashed.len(), 16);
         assert!(hashed.chars().all(|ch| ch.is_ascii_hexdigit()));
         assert_eq!(normalize_role(Some("AXButton".into())), "Button");
-        assert_eq!(hash_mix(5381, None), hash_mix(5381, Some("")));
+        assert_eq!(REQUEST_TYPE_ATTRIBUTE, 2);
+        assert_eq!(REQUEST_TYPE_MULTIPLE_ATTRIBUTE, 5);
+        let types = AttrTypes {
+            children: Some(8),
+            role: Some(45),
+            identifier: Some(25),
+            label: Some(25),
+            title: None,
+            description: Some(0),
+            frame: Some(21),
+            value: Some(53),
+        };
+        assert_eq!(types.all_codes(), vec![8, 45, 25, 53, 21]);
+        let parsed = parse_rect_string("NSRect: {{10.5, 20}, {30, 40.25}}").unwrap();
+        assert_eq!(parsed.origin.x, 10.5);
+        assert_eq!(parsed.origin.y, 20.0);
+        assert_eq!(parsed.size.width, 30.0);
+        assert_eq!(parsed.size.height, 40.25);
+        assert!(parse_rect_string("{{0, 0}, {0, 0}}").is_none());
     }
 }
