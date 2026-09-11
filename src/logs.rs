@@ -43,7 +43,7 @@ pub struct Batch {
 impl Manager {
     pub async fn start(&self, device: &str, pid: u32) -> Result<String> {
         let device = runtime::booted_device(device).await?;
-        let bound = session::active(&device.udid)?;
+        let bound = session::active(&device.udid).await?;
         anyhow::ensure!(
             bound.pid == pid,
             "Log PID does not belong to the active Mx session"

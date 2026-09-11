@@ -45,13 +45,21 @@ impl Fixture {
                 format!("{}:/usr/bin:/bin", self.dir.path().join("bin").display()),
             )
             .env("MX_TEST_ROOT", self.dir.path())
-            .env("MX_STATE_DIR", self.dir.path().join("state"));
+            .env("MX_STATE_DIR", self.dir.path().join("state"))
+            .env("MX_MIN_FREE_MIB", "0")
+            .env("MX_POST_BOOT_SETTLE_SECS", "0");
         command
     }
     pub fn calls(&self) -> Vec<serde_json::Value> {
-        std::fs::read_to_string(self.dir.path().join("calls.jsonl"))
-            .unwrap_or_default()
+        let path = self.dir.path().join("calls.jsonl");
+        let Ok(file) = std::fs::File::open(&path) else {
+            return Vec::new();
+        };
+        let _ = file.lock_shared();
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        content
             .lines()
+            .filter(|line| !line.trim().is_empty())
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
     }

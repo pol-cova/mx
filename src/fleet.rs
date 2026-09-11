@@ -28,15 +28,25 @@ pub fn available_disk_bytes() -> Result<u64> {
     );
     Ok(u64::from(stats.f_bavail).saturating_mul(stats.f_frsize))
 }
+/// Minimum free disk space for simulator creation, in MiB. Defaults to 2048.
+fn minimum_free_mib() -> Result<u64> {
+    Ok(std::env::var("MX_MIN_FREE_MIB")
+        .ok()
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .context("MX_MIN_FREE_MIB must be a whole number of MiB")
+        })
+        .transpose()?
+        .unwrap_or(2048))
+}
 fn require_creation_headroom() -> Result<()> {
-    if std::env::var_os("MX_TEST_ROOT").is_some() {
-        return Ok(());
-    }
-    const MIN_FREE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+    let minimum = minimum_free_mib()?;
     let available = available_disk_bytes()?;
     anyhow::ensure!(
-        available >= MIN_FREE_BYTES,
-        "Simulator creation requires at least 2048 MiB free; only {} MiB is available",
+        available >= minimum.saturating_mul(1024 * 1024),
+        "Simulator creation requires at least {} MiB free; only {} MiB is available",
+        minimum,
         available / 1024 / 1024
     );
     Ok(())
@@ -89,7 +99,7 @@ pub async fn clone(source: &str, name: &str) -> Result<Owned> {
     );
     require_creation_headroom()?;
     let source = sim::select(&sim::list().await?, Some(source))?;
-    let _lock = session::lock(&source.udid)?;
+    let _lock = session::lock(&source.udid).await?;
     anyhow::ensure!(
         source.state == "Shutdown",
         "Clone source must be shut down; Mx will not interrupt an existing simulator"
@@ -155,7 +165,7 @@ pub async fn boot(
 ) -> Result<sim::Device> {
     anyhow::ensure!((1..=64).contains(&max_booted), "max_booted must be 1..64");
     let owned = owned(device)?;
-    let _lock = session::lock(device)?;
+    let _lock = session::lock(device).await?;
     let devices = sim::list().await?;
     let selected = sim::select(&devices, Some(&owned.device))?;
     if selected.state != "Booted" {
@@ -172,7 +182,7 @@ pub async fn boot(
         )?,
     };
     let fresh_boot = selected.state != "Booted";
-    sim::boot_with_budget(&selected, max_booted, Some(budget)).await?;
+    sim::boot_with_budget(&selected, max_booted, &devices, Some(budget)).await?;
     if fresh_boot {
         profile::trim_after_boot(&selected.udid).await?;
     }
@@ -182,8 +192,8 @@ pub async fn boot(
 }
 pub async fn shutdown(device: &str) -> Result<()> {
     owned(device)?;
-    let _lock = session::lock(device)?;
-    if let Ok(session) = session::for_device(device) {
+    let _lock = session::lock(device).await?;
+    if let Ok(session) = session::for_device(device).await {
         anyhow::ensure!(
             !session.active,
             "Stop the app session before shutting down its device"
@@ -197,7 +207,7 @@ pub async fn shutdown(device: &str) -> Result<()> {
 }
 pub async fn delete(device: &str) -> Result<()> {
     owned(device)?;
-    let _lock = session::lock(device)?;
+    let _lock = session::lock(device).await?;
     let selected = sim::select(&sim::list().await?, Some(device))?;
     anyhow::ensure!(
         selected.state == "Shutdown",

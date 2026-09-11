@@ -1,6 +1,7 @@
 mod common;
 use common::Fixture;
 use serde_json::Value;
+use std::process::Stdio;
 
 #[test]
 fn full_run_preserves_paths_and_orders_boot_install_launch() {
@@ -528,6 +529,7 @@ fn slim_profile_runs_optional_post_boot_cleanup() {
     let output = fixture
         .command()
         .env("MX_TEST_BOOTED", "1")
+        .env("MX_TEST_SIM_TREE", "1")
         .arg("profile")
         .arg(&request)
         .output()
@@ -568,6 +570,24 @@ fn slim_profile_runs_optional_post_boot_cleanup() {
                 })
             })
     }));
+    let helper_pid = std::fs::read_to_string(fixture.dir.path().join("sim-helper.pid")).unwrap();
+    let helper_dead = |pid: &str| {
+        !std::process::Command::new("/bin/kill")
+            .args(["-0", pid])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !helper_dead(&helper_pid) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "trim did not terminate the simulator helper process"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
 }
 
 #[test]
@@ -671,4 +691,36 @@ fn fresh_device_creation_uses_requested_type_without_cloning_source_data() {
             .join("state/00000000-0000-4000-8000-000000000001.owned.json")
             .exists()
     );
+}
+
+
+#[test]
+fn training_disk_headroom_check_uses_the_real_filesystem() {
+    let fixture = Fixture::new();
+    let output = fixture
+        .command()
+        .env("MX_MIN_FREE_MIB", "999999999")
+        .args(["create", "--template", "test-device", "--name", "Huge"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        message.contains("requires at least 999999999 MiB free"),
+        "{message}"
+    );
+    assert!(!fixture.calls().iter().any(|c| c["args"][1] == "create"));
+
+    let output = fixture
+        .command()
+        .env("MX_MIN_FREE_MIB", "not-a-number")
+        .args(["create", "--template", "test-device", "--name", "Invalid"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("MX_MIN_FREE_MIB must be a whole number of MiB")
+    );
+    assert!(!fixture.calls().iter().any(|c| c["args"][1] == "create"));
 }
