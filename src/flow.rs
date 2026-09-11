@@ -62,6 +62,7 @@ async fn expected_screen(
         return interaction::settle(device, bound, None, timeout_ms).await;
     }
     tokio::time::timeout(Duration::from_millis(timeout_ms), async {
+        let mut backoff = interaction::PollBackoff::new(25, 300);
         loop {
             let screen = interaction::inspect_bound(device, bound).await?;
             if screen
@@ -71,7 +72,7 @@ async fn expected_screen(
             {
                 return Ok(screen);
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            backoff.wait().await;
         }
     })
     .await
@@ -172,13 +173,13 @@ pub async fn capture(request: CaptureRequest) -> Result<Value> {
         request.output_dir.display()
     );
     std::fs::create_dir_all(&request.output_dir)?;
-    let device_id = match session::for_device(&request.device) {
+    let device_id = match session::for_device(&request.device).await {
         Ok(bound) => bound.device,
         Err(_) => runtime::booted_device(&request.device).await?.udid,
     };
     let flow_started = std::time::Instant::now();
-    let _lock = session::lock(&device_id)?;
-    let mut bound = session::active(&device_id)?;
+    let _lock = session::lock(&device_id).await?;
+    let mut bound = session::active(&device_id).await?;
     let mut current = interaction::inspect_bound(&device_id, &bound).await?;
     let mut names = HashSet::new();
     let mut captured = Vec::with_capacity(request.states.len());
@@ -225,7 +226,7 @@ pub async fn capture(request: CaptureRequest) -> Result<Value> {
             .await?;
         }
         let delta = session::update(&mut bound, current.clone(), Some(base_revision));
-        session::save(&bound)?;
+        session::save(&bound).await?;
         let transition_ms = transition_started.elapsed().as_millis();
         let screen = current.clone();
         let screenshot_started = std::time::Instant::now();

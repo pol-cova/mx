@@ -5,6 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs::File,
     path::PathBuf,
+    sync::Arc,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,10 +19,20 @@ pub struct Session {
     pub active: bool,
     pub revision: u64,
     pub next_reference: u64,
-    pub screen: Option<Screen>,
+    pub screen: Option<Arc<Screen>>,
 }
 
-pub fn root() -> Result<PathBuf> {
+pub(crate) async fn blocking<T, F>(work: F) -> Result<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(work)
+        .await
+        .context("Session filesystem task panicked")?
+}
+
+fn root_blocking() -> Result<PathBuf> {
     let root = if let Some(path) = std::env::var_os("MX_STATE_DIR") {
         PathBuf::from(path)
     } else {
@@ -30,6 +41,9 @@ pub fn root() -> Result<PathBuf> {
     };
     std::fs::create_dir_all(&root)?;
     Ok(root)
+}
+pub fn root() -> Result<PathBuf> {
+    root_blocking()
 }
 fn key(value: &str) -> Result<&str> {
     anyhow::ensure!(
@@ -42,8 +56,8 @@ fn key(value: &str) -> Result<&str> {
     );
     Ok(value)
 }
-pub fn lock(device: &str) -> Result<File> {
-    let path = root()?.join(format!("{}.lock", key(device)?));
+fn lock_file(device: &str) -> Result<File> {
+    let path = root_blocking()?.join(format!("{}.lock", key(device)?));
     let file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -53,22 +67,33 @@ pub fn lock(device: &str) -> Result<File> {
         .context("Device is busy in another Mx operation; retry after it finishes")?;
     Ok(file)
 }
-pub fn save(session: &Session) -> Result<()> {
+pub async fn lock(device: &str) -> Result<File> {
+    let device = device.to_owned();
+    blocking(move || lock_file(&device)).await
+}
+fn write_session(session: &Session) -> Result<()> {
     use std::io::Write;
-    let root = root()?;
+    let root = root_blocking()?;
     let mut temp = tempfile::NamedTempFile::new_in(&root)?;
     serde_json::to_writer(&mut temp, session)?;
     temp.flush()?;
-    temp.as_file().sync_all()?;
     temp.persist(root.join(format!("{}.session.json", key(&session.device)?)))?;
     Ok(())
 }
-pub fn for_device(device: &str) -> Result<Session> {
-    let bytes = std::fs::read(root()?.join(format!("{}.session.json", key(device)?)))
+pub async fn save(session: &Session) -> Result<()> {
+    let session = session.clone();
+    blocking(move || write_session(&session)).await
+}
+pub(crate) fn read(device: &str) -> Result<Session> {
+    let bytes = std::fs::read(root_blocking()?.join(format!("{}.session.json", key(device)?)))
         .context("No Mx session for this device; use mx run first")?;
     let session: Session = serde_json::from_slice(&bytes)?;
     anyhow::ensure!(session.device == device, "Session/device mismatch");
     Ok(session)
+}
+pub async fn for_device(device: &str) -> Result<Session> {
+    let device = device.to_owned();
+    blocking(move || read(&device)).await
 }
 tokio::task_local! {
     // Rechecked after the device lock is acquired, so discovery cannot race session replacement.
@@ -84,46 +109,57 @@ pub fn check_expected(session: &Session) -> Result<()> {
     Ok(())
 }
 
-pub fn active(device: &str) -> Result<Session> {
-    let session = for_device(device)?;
+pub(crate) fn read_active(device: &str) -> Result<Session> {
+    let session = read(device)?;
     anyhow::ensure!(session.active, "Session is stopped; run the app again");
+    Ok(session)
+}
+pub async fn active(device: &str) -> Result<Session> {
+    let device = device.to_owned();
+    let session = blocking(move || read_active(&device)).await?;
     check_expected(&session)?;
     Ok(session)
 }
-pub fn list() -> Result<Vec<Session>> {
-    let mut result = Vec::new();
-    for entry in std::fs::read_dir(root()?)? {
-        let path = entry?.path();
-        if path
-            .file_name()
-            .is_some_and(|n| n.to_string_lossy().ends_with(".session.json"))
-        {
-            result.push(serde_json::from_slice(&std::fs::read(path)?)?);
+pub async fn list() -> Result<Vec<Session>> {
+    blocking(|| {
+        let mut result = Vec::new();
+        for entry in std::fs::read_dir(root_blocking()?)? {
+            let path = entry?.path();
+            if path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with(".session.json"))
+            {
+                result.push(serde_json::from_slice::<Session>(&std::fs::read(path)?)?);
+            }
         }
-    }
-    Ok(result)
+        Ok(result)
+    })
+    .await
 }
-pub fn bind(
+pub async fn bind(
     device: String,
     project: PathBuf,
     scheme: String,
     bundle_id: String,
     pid: u32,
 ) -> Result<Session> {
-    let session = Session {
-        id: uuid::Uuid::new_v4().to_string(),
-        device,
-        project,
-        scheme,
-        bundle_id,
-        pid,
-        active: true,
-        revision: 0,
-        next_reference: 1,
-        screen: None,
-    };
-    save(&session)?;
-    Ok(session)
+    blocking(move || {
+        let session = Session {
+            id: uuid::Uuid::new_v4().to_string(),
+            device,
+            project,
+            scheme,
+            bundle_id,
+            pid,
+            active: true,
+            revision: 0,
+            next_reference: 1,
+            screen: None,
+        };
+        write_session(&session)?;
+        Ok(session)
+    })
+    .await
 }
 pub fn check_foreground(session: &Session, screen: &Screen) -> Result<()> {
     anyhow::ensure!(
@@ -142,7 +178,7 @@ pub struct Delta {
     pub session_id: String,
     pub revision: u64,
     pub base_revision: u64,
-    pub full: Option<Screen>,
+    pub full: Option<Arc<Screen>>,
     pub added: Vec<Element>,
     pub removed: Vec<u64>,
     pub changed: Vec<Element>,
@@ -201,12 +237,13 @@ pub fn update(session: &mut Session, mut screen: Screen, since: Option<u64>) -> 
     if session.screen.is_none() || !added.is_empty() || !changed.is_empty() || !removed.is_empty() {
         session.revision += 1;
     }
+    let shared = Arc::new(screen);
     let full = if since == Some(base_revision) && session.screen.is_some() {
         None
     } else {
-        Some(screen.clone())
+        Some(Arc::clone(&shared))
     };
-    session.screen = Some(screen);
+    session.screen = Some(shared);
     Delta {
         session_id: session.id.clone(),
         revision: session.revision,
@@ -221,9 +258,8 @@ pub fn update(session: &mut Session, mut screen: Screen, since: Option<u64>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn stable_references_and_delta_follow_identifier_across_label_change() {
-        let mut session = Session {
+    fn sample_session() -> Session {
+        Session {
             id: "s".into(),
             device: "d".into(),
             project: PathBuf::new(),
@@ -234,15 +270,22 @@ mod tests {
             revision: 0,
             next_reference: 1,
             screen: None,
-        };
-        let mut screen = Screen {
+        }
+    }
+    fn sample_screen(label: &str) -> Screen {
+        Screen {
             device: "d".into(),
             pid: Some(1),
-            elements: crate::ui::parse_elements(
-                r#"[{"type":"StaticText","AXUniqueId":"counter","AXLabel":"0"}]"#,
-            )
+            elements: crate::ui::parse_elements(&format!(
+                r#"[{{"type":"StaticText","AXUniqueId":"counter","AXLabel":"{label}"}}]"#
+            ))
             .unwrap(),
-        };
+        }
+    }
+    #[test]
+    fn stable_references_and_delta_follow_identifier_across_label_change() {
+        let mut session = sample_session();
+        let mut screen = sample_screen("0");
         let first = update(&mut session, screen.clone(), None);
         screen.elements[0].label = Some("1".into());
         let changed = update(&mut session, screen.clone(), Some(first.revision));
@@ -255,6 +298,23 @@ mod tests {
                 && unchanged.removed.is_empty()
         );
         assert_eq!(unchanged.revision, changed.revision);
+    }
+    #[test]
+    fn delta_reuses_stored_screen_allocation() {
+        let mut session = sample_session();
+        let screen = sample_screen("0");
+        let delta = update(&mut session, screen, None);
+        let stored = session.screen.as_ref().unwrap();
+        let delta_screen = delta.full.as_ref().unwrap();
+        assert!(Arc::ptr_eq(delta_screen, stored));
+    }
+    #[test]
+    fn session_serializes_the_shared_screen() {
+        let mut session = sample_session();
+        update(&mut session, sample_screen("0"), None);
+        let saved = serde_json::to_string(&session).unwrap();
+        let restored: Session = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.screen, session.screen);
     }
     #[test]
     fn unsafe_identifiers_are_rejected() {

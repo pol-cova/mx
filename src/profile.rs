@@ -82,22 +82,27 @@ pub async fn trim_after_boot(device: &str) -> Result<Vec<String>> {
     let trim_watch = should_trim_watch_agents(&receipt.keep);
     let live = std::env::var_os("MX_TEST_ROOT").is_none();
     if live {
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        wait_for_springboard(device).await?;
     }
-    let mut trimmed = Vec::new();
-    if trim_spotlight {
-        match sim::call(&["terminate", device, "com.apple.Spotlight"]).await {
-            Ok(_) => trimmed.push("com.apple.Spotlight".into()),
-            Err(error) if error.to_string().contains("found nothing to terminate") => {}
-            Err(error) => {
-                return Err(error).context("Could not trim the profiled Spotlight process");
-            }
+    let spotlight = async {
+        if !trim_spotlight {
+            return anyhow::Ok(Vec::<String>::new());
         }
-    }
-    if trim_watch {
+        match sim::call(&["terminate", device, "com.apple.Spotlight"]).await {
+            Ok(_) => anyhow::Ok(vec!["com.apple.Spotlight".to_owned()]),
+            Err(error) if error.to_string().contains("found nothing to terminate") => {
+                anyhow::Ok(vec![])
+            }
+            Err(error) => Err(error.context("Could not trim the profiled Spotlight process")),
+        }
+    };
+    let watch = async {
+        if !trim_watch {
+            return anyhow::Ok(Vec::<String>::new());
+        }
         engine::transaction::bootout_user_agents(device, WATCH_USER_AGENTS).await?;
-        trimmed.push("watch-user-agents".into());
-    }
+        anyhow::Ok(vec!["watch-user-agents".to_owned()])
+    };
     let mut optional_agents = Vec::new();
     if !receipt
         .keep
@@ -113,21 +118,55 @@ pub async fn trim_after_boot(device: &str) -> Result<Vec<String>> {
     {
         optional_agents.push("com.apple.managedconfiguration.profiled");
     }
-    if !optional_agents.is_empty() {
-        engine::transaction::bootout_user_agents(device, &optional_agents).await?;
-        trimmed.extend(optional_agents.into_iter().map(String::from));
-    }
-    if live {
-        for pass in 0..2 {
-            trimmed.extend(metrics::terminate_named(device, TRANSIENT_HELPERS).await?);
-            if pass == 0 {
-                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-            }
+    let optional = async {
+        if optional_agents.is_empty() {
+            return anyhow::Ok(Vec::<String>::new());
         }
+        let names: Vec<String> = optional_agents
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        engine::transaction::bootout_user_agents(device, &optional_agents).await?;
+        anyhow::Ok(names)
+    };
+    let (spotlight_trimmed, watch_trimmed, optional_trimmed) =
+        tokio::join!(spotlight, watch, optional);
+    let mut trimmed = spotlight_trimmed?;
+    trimmed.extend(watch_trimmed?);
+    trimmed.extend(optional_trimmed?);
+    if live {
+        trimmed.extend(trim_helpers(device).await?);
     }
     trimmed.sort();
     trimmed.dedup();
     Ok(trimmed)
+}
+
+async fn wait_for_springboard(device: &str) -> Result<()> {
+    let started = std::time::Instant::now();
+    loop {
+        if metrics::any_named(device, &["SpringBoard"]).await? {
+            return Ok(());
+        }
+        if started.elapsed() >= std::time::Duration::from_secs(5) {
+            return Ok(());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+
+async fn trim_helpers(device: &str) -> Result<Vec<String>> {
+    let trimmed = metrics::terminate_named(device, TRANSIENT_HELPERS).await?;
+    let started = std::time::Instant::now();
+    loop {
+        if !metrics::any_named(device, TRANSIENT_HELPERS).await? {
+            return Ok(trimmed);
+        }
+        if started.elapsed() >= std::time::Duration::from_secs(10) {
+            return metrics::terminate_named(device, TRANSIENT_HELPERS).await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
 }
 fn write(receipt: &Receipt) -> Result<()> {
     use std::io::Write;
@@ -236,7 +275,7 @@ pub async fn execute(request: Request) -> Result<serde_json::Value> {
         );
     }
     fleet::owned(&selected.udid)?;
-    let _lock = session::lock(&selected.udid)?;
+    let _lock = session::lock(&selected.udid).await?;
     anyhow::ensure!(
         selected.runtime == "com.apple.CoreSimulator.SimRuntime.iOS-26-5",
         "This experimental capability profile is restricted to the tested iOS 26.5 runtime"
@@ -245,7 +284,7 @@ pub async fn execute(request: Request) -> Result<serde_json::Value> {
         selected.state == "Booted",
         "Boot the clone before changing its profile"
     );
-    if let Ok(bound) = session::for_device(&selected.udid) {
+    if let Ok(bound) = session::for_device(&selected.udid).await {
         anyhow::ensure!(
             !bound.active,
             "Stop the app session before changing its profile"

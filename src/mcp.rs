@@ -149,16 +149,18 @@ fn boot_limit() -> usize {
 }
 
 impl Server {
-    fn bound(&self, device: &str) -> anyhow::Result<String> {
-        let bindings = self.bindings.lock().unwrap();
-        let (canonical, expected) = bindings.get(device).ok_or_else(|| {
-            anyhow::anyhow!(
-                "This MCP client has not bound the device; call mx_run or mx_use_session first"
-            )
-        })?;
-        let current = session::active(canonical)?;
+    async fn bound(&self, device: &str) -> anyhow::Result<String> {
+        let (canonical, expected) = {
+            let bindings = self.bindings.lock().unwrap();
+            bindings.get(device).cloned().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "This MCP client has not bound the device; call mx_run or mx_use_session first"
+                )
+            })?
+        };
+        let current = session::active(&canonical).await?;
         anyhow::ensure!(
-            &current.id == expected,
+            current.id == expected,
             "Another client replaced this app session; refusing to target its app"
         );
         Ok(expected.clone())
@@ -301,7 +303,7 @@ impl Server {
         Parameters(request): Parameters<DeviceRequest>,
     ) -> CallToolResult {
         cancellable(context, async {
-            let expected = self.bound(&request.device)?;
+            let expected = self.bound(&request.device).await?;
             session::EXPECTED_SESSION
                 .scope(expected, runtime::ui(&request.device))
                 .await
@@ -318,7 +320,7 @@ impl Server {
         Parameters(request): Parameters<TapRequest>,
     ) -> CallToolResult {
         cancellable(context, async {
-            let expected = self.bound(&request.device)?;
+            let expected = self.bound(&request.device).await?;
             session::EXPECTED_SESSION
                 .scope(expected, runtime::tap(&request.device, request.selector))
                 .await
@@ -335,7 +337,7 @@ impl Server {
         Parameters(request): Parameters<TypeRequest>,
     ) -> CallToolResult {
         cancellable(context, async {
-            let expected = self.bound(&request.device)?;
+            let expected = self.bound(&request.device).await?;
             session::EXPECTED_SESSION
                 .scope(expected, runtime::type_text(&request.device, &request.text))
                 .await
@@ -399,7 +401,7 @@ impl Server {
         Parameters(request): Parameters<StopRequest>,
     ) -> CallToolResult {
         cancellable(context, async {
-            let expected = self.bound(&request.device)?;
+            let expected = self.bound(&request.device).await?;
             session::EXPECTED_SESSION
                 .scope(expected, runtime::stop(&request.device, &request.bundle_id))
                 .await
@@ -411,7 +413,11 @@ impl Server {
         annotations(read_only_hint = true)
     )]
     async fn mx_sessions(&self) -> CallToolResult {
-        result(session::list().map(|sessions| serde_json::json!({"sessions":sessions})))
+        result(
+            session::list()
+                .await
+                .map(|sessions| serde_json::json!({"sessions":sessions})),
+        )
     }
     #[tool(
         description = "Inspect the bound app and return stable element references and a delta since a revision. First call returns a full screen.",
@@ -423,7 +429,7 @@ impl Server {
         Parameters(r): Parameters<ObserveRequest>,
     ) -> CallToolResult {
         cancellable(context, async {
-            let expected = self.bound(&r.device)?;
+            let expected = self.bound(&r.device).await?;
             session::EXPECTED_SESSION
                 .scope(expected, interaction::observe(&r.device, r.since))
                 .await
@@ -439,7 +445,7 @@ impl Server {
         Parameters(r): Parameters<interaction::ActionRequest>,
     ) -> CallToolResult {
         cancellable(context, async {
-            let expected = self.bound(&r.device)?;
+            let expected = self.bound(&r.device).await?;
             session::EXPECTED_SESSION
                 .scope(expected, interaction::act(r))
                 .await
@@ -455,7 +461,7 @@ impl Server {
         Parameters(r): Parameters<mx::flow::CaptureRequest>,
     ) -> CallToolResult {
         cancellable(context, async {
-            let expected = self.bound(&r.device)?;
+            let expected = self.bound(&r.device).await?;
             session::EXPECTED_SESSION
                 .scope(expected, mx::flow::capture(r))
                 .await
@@ -614,7 +620,7 @@ impl Server {
     ) -> CallToolResult {
         cancellable(context, async {
             let device = runtime::device(&r.device).await?;
-            let bound = session::active(&device.udid)?;
+            let bound = session::active(&device.udid).await?;
             anyhow::ensure!(
                 bound.id == r.session_id,
                 "Session ID does not match this device"

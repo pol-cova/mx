@@ -17,7 +17,13 @@ fn json_array(values: &[String]) -> String {
 fn record(root: &Path, name: &str, args: &[String]) {
     use std::io::Write;
     let mut file = fs::OpenOptions::new().create(true).append(true).open(root.join("calls.jsonl")).unwrap();
+    let mut locked = false;
+    for _ in 0..500 {
+        if file.try_lock().is_ok() { locked = true; break; }
+        thread::sleep(Duration::from_millis(2));
+    }
     writeln!(file, "{{\"program\":\"{}\",\"args\":{}}}", escape(name), json_array(args)).unwrap();
+    if locked { let _ = file.unlock(); }
 }
 
 fn labels(root: &Path) -> Vec<String> {
@@ -129,6 +135,15 @@ fn axe(root: &Path, args: &[String]) {
     match args.first().map(String::as_str).unwrap_or("") {
         "--version" => println!("1.8.0"),
         "describe-ui" => {
+            if args.iter().any(|a| a == "--watch") {
+                let pid = env::var("MX_TEST_FOREGROUND_PID").unwrap_or_else(|_| "4321".into());
+                for _ in 0..3 {
+                    println!(r#"[{{"type":"Application","pid":{pid},"frame":{{"x":0,"y":0,"width":390,"height":844}},"children":[{{"type":"Button","AXLabel":"Continue","AXUniqueId":"first"}}]}}]"#);
+                    io::stdout().flush().unwrap();
+                    thread::sleep(Duration::from_millis(10));
+                }
+                return;
+            }
             let pid = env::var("MX_TEST_FOREGROUND_PID").unwrap_or_else(|_| "4321".into());
             println!(r#"[{{"type":"Application","pid":{pid},"frame":{{"x":0,"y":0,"width":390,"height":844}},"children":[{{"type":"Button","AXLabel":"Continue","AXUniqueId":"first"}},{{"type":"Button","AXLabel":"Continue","AXUniqueId":"second"}},{{"type":"TextField","AXLabel":"Name","AXUniqueId":"name","AXValue":""}}]}}]"#);
         }

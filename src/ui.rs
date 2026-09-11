@@ -167,17 +167,73 @@ pub async fn dimensions(device: &str) -> Result<(f64, f64)> {
 }
 
 pub async fn inspect(device: &str) -> Result<Screen> {
-    let raw = describe(device).await?;
+    parse_screen(&describe(device).await?, device)
+}
+pub fn parse_screen(raw: &str, device: &str) -> Result<Screen> {
     Ok(Screen {
-        device: device.into(),
-        pid: serde_json::from_str::<Value>(&raw)?
+        device: device.to_owned(),
+        pid: serde_json::from_str::<Value>(raw)?
             .as_array()
             .and_then(|a| a.first())
             .and_then(|n| n["pid"].as_u64())
             .and_then(|p| u32::try_from(p).ok()),
-        elements: parse_elements(&raw)?,
+        elements: parse_elements(raw)?,
     })
 }
+pub fn parse_version(raw: &str) -> Option<(u32, u32, u32)> {
+    let text: String = raw
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let mut parts = text.split('.').filter(|p| !p.is_empty());
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    Some((major, minor, patch))
+}
+
+const WATCH_UI_MIN_VERSION: (u32, u32, u32) = (999, 0, 0);
+static AXE_VERSION: tokio::sync::OnceCell<Option<(u32, u32, u32)>> =
+    tokio::sync::OnceCell::const_new();
+
+pub async fn axe_version() -> Result<(u32, u32, u32)> {
+    AXE_VERSION
+        .get_or_try_init(|| async {
+            let raw = describe_version().await?;
+            anyhow::Ok(parse_version(&raw))
+        })
+        .await?
+        .to_owned()
+        .context("AXe returned an unreadable version")
+}
+
+async fn describe_version() -> Result<String> {
+    process::output(&bridge_path(), &strings(&["--version"]))
+        .await
+        .context("UI inspection requires AXe. Run sh scripts/setup-axe.sh from the Mx checkout, install AXe on PATH, or set MX_AXE_PATH")
+}
+
+fn watch_min_version() -> (u32, u32, u32) {
+    std::env::var("MX_UI_WATCH_MIN_VERSION")
+        .ok()
+        .and_then(|raw| parse_version(&raw))
+        .unwrap_or(WATCH_UI_MIN_VERSION)
+}
+
+pub async fn watch_supported() -> bool {
+    matches!(axe_version().await, Ok(version) if version >= watch_min_version())
+}
+
+pub async fn describe_watch(device: &str) -> Result<tokio::sync::mpsc::Receiver<String>> {
+    let (sender, receiver) = tokio::sync::mpsc::channel(32);
+    let args = strings(&["describe-ui", "--watch", "--udid", device]);
+    let bridge = bridge_path();
+    tokio::spawn(async move {
+        let _status = process::pump(&bridge, &args, sender).await;
+    });
+    Ok(receiver)
+}
+
 pub async fn tap(device: &str, selector: Selector) -> Result<()> {
     let screen = inspect(device).await?;
     tap_on_screen(&screen, selector).await

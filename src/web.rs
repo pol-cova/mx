@@ -92,7 +92,7 @@ pub async fn start(requested: &str, options: Options) -> Result<Server> {
         "scale must be 0.1..1.0"
     );
     let device = runtime::booted_device(requested).await?;
-    let bound = session::active(&device.udid)?;
+    let bound = session::active(&device.udid).await?;
     let dimensions = ui::dimensions(&device.udid).await?;
     let listener = TcpListener::bind(("127.0.0.1", options.port))?;
     listener.set_nonblocking(true)?;
@@ -386,7 +386,7 @@ enum Control {
 }
 
 fn control(device: &str, expected_session: &str, body: &[u8], control: Control) -> Result<()> {
-    let bound = session::active(device)?;
+    let bound = session::read_active(device)?;
     anyhow::ensure!(
         bound.id == expected_session,
         "Mx session changed; reload mx web"

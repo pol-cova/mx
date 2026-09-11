@@ -255,7 +255,7 @@ async fn execute(cli: Cli) -> Result<()> {
             }
             print(serde_json::json!({"mcpServers": {"mx": server}}))?;
         }
-        Commands::Sessions => print(session::list()?)?,
+        Commands::Sessions => print(session::list().await?)?,
         Commands::Metrics { device } => print(mx::metrics::snapshot(&device).await?)?,
         Commands::Profile { file } => {
             print(mx::profile::execute(serde_json::from_slice(&std::fs::read(file)?)?).await?)?

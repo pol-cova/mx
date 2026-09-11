@@ -672,3 +672,47 @@ fn fresh_device_creation_uses_requested_type_without_cloning_source_data() {
             .exists()
     );
 }
+#[test]
+fn env_gated_watch_mode_settles_from_a_single_axe_process() {
+    let fixture = Fixture::new();
+    let plan = fixture.dir.path().join("action.json");
+    std::fs::write(
+        &plan,
+        serde_json::to_vec(&serde_json::json!({"device":"test-device","actions":[{"action":"tap","selector":{"identifier":"first"}}],"timeout_ms":2000})).unwrap(),
+    )
+    .unwrap();
+    let result = fixture
+        .command()
+        .env("MX_TEST_BOOTED", "1")
+        .env("MX_UI_WATCH_MIN_VERSION", "1.0.0")
+        .arg("action")
+        .arg(plan)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let axe_calls: Vec<_> = fixture
+        .calls()
+        .into_iter()
+        .filter(|c| c["program"] == "axe")
+        .collect();
+    let watch_calls = axe_calls
+        .iter()
+        .filter(|c| {
+            c["args"][0] == "describe-ui"
+                && c["args"].as_array().unwrap().iter().any(|a| a == "--watch")
+        })
+        .count();
+    let poll_calls = axe_calls
+        .iter()
+        .filter(|c| {
+            c["args"][0] == "describe-ui"
+                && !c["args"].as_array().unwrap().iter().any(|a| a == "--watch")
+        })
+        .count();
+    assert!(watch_calls >= 2, "{axe_calls:?}");
+    assert!(poll_calls <= 1, "{axe_calls:?}");
+}

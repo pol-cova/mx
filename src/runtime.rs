@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{path::PathBuf, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -51,13 +51,27 @@ pub async fn inspect(project: PathBuf) -> Result<Value> {
 pub async fn run(request: RunRequest) -> Result<RunResult> {
     let started = Instant::now();
     let project = xcode::discover(&request.project)?;
-    let scheme = match request.scheme {
-        Some(scheme) if !scheme.trim().is_empty() => scheme,
-        Some(_) => anyhow::bail!("Scheme cannot be empty"),
-        None => xcode::select_scheme(&xcode::schemes(&project).await?, None)?,
+    let (scheme, device) = if let Some(scheme) = request
+        .scheme
+        .as_ref()
+        .map(|scheme| scheme.trim())
+        .filter(|scheme| !scheme.is_empty())
+    {
+        let device = sim::select(&sim::list().await?, request.device.as_deref())?;
+        (scheme.to_owned(), device)
+    } else {
+        anyhow::ensure!(
+            request
+                .scheme
+                .as_deref()
+                .is_none_or(|scheme| !scheme.trim().is_empty()),
+            "Scheme cannot be empty"
+        );
+        let (schemes, devices) = tokio::join!(xcode::schemes(&project), sim::list());
+        let device = sim::select(&devices?, request.device.as_deref())?;
+        (xcode::select_scheme(&schemes?, None)?, device)
     };
-    let device = sim::select(&sim::list().await?, request.device.as_deref())?;
-    let _device_lock = session::lock(&device.udid)?;
+    let _device_lock = session::lock(&device.udid).await?;
     let mut timings_ms = std::collections::BTreeMap::new();
     timings_ms.insert("discovery".into(), started.elapsed().as_millis());
     let artifacts = project
@@ -90,9 +104,11 @@ pub async fn run(request: RunRequest) -> Result<RunResult> {
     eprintln!("Resolving application target...");
     let mut settings_args = args.clone();
     settings_args.extend(strings(&["-showBuildSettings", "-json"]));
-    let phase = Instant::now();
-    let app = xcode::app_from_settings(&output("xcodebuild", &settings_args).await?)?;
-    timings_ms.insert("settings".into(), phase.elapsed().as_millis());
+    let settings_started = Instant::now();
+    let settings = tokio::spawn(async move {
+        let raw = output("xcodebuild", &settings_args).await?;
+        anyhow::Ok(xcode::app_from_settings(&raw)?)
+    });
     eprintln!("Building {scheme}...");
     args.push("build".into());
     let log_path = artifacts.join("build.log");
@@ -109,6 +125,7 @@ pub async fn run(request: RunRequest) -> Result<RunResult> {
         serde_json::to_vec_pretty(&diagnostics)?,
     )?;
     if let Err(error) = build {
+        settings.abort();
         return Err(diagnostics::BuildFailure {
             build_log: log_path,
             diagnostics,
@@ -117,6 +134,11 @@ pub async fn run(request: RunRequest) -> Result<RunResult> {
         }
         .into());
     }
+    let app = settings
+        .await
+        .context("Settings task panicked")?
+        .context("Build settings failed")?;
+    timings_ms.insert("settings".into(), settings_started.elapsed().as_millis());
     timings_ms.insert("build".into(), phase.elapsed().as_millis());
     eprintln!("Preparing {}...", device.name);
     let (bundle_id, pid, launch_timings) = install_launch(&device, &app).await?;
@@ -127,12 +149,13 @@ pub async fn run(request: RunRequest) -> Result<RunResult> {
         scheme.clone(),
         bundle_id.clone(),
         pid,
-    )?;
+    )
+    .await?;
     let (ui, ui_error) = if request.inspect_ui {
         match interaction::settle(&device.udid, &bound, None, 10_000).await {
             Ok(screen) => {
                 session::update(&mut bound, screen.clone(), None);
-                session::save(&bound)?;
+                session::save(&bound).await?;
                 (Some(screen), None)
             }
             Err(error) => (None, Some(error.to_string())),
@@ -229,7 +252,7 @@ pub async fn launch(request: LaunchRequest) -> Result<Value> {
         .canonicalize()
         .context("Prebuilt app does not exist")?;
     let device = device(&request.device).await?;
-    let _lock = session::lock(&device.udid)?;
+    let _lock = session::lock(&device.udid).await?;
     let (bundle_id, pid, timings) = install_launch(&device, &app).await?;
     let mut bound = session::bind(
         device.udid.clone(),
@@ -237,12 +260,13 @@ pub async fn launch(request: LaunchRequest) -> Result<Value> {
         "prebuilt".into(),
         bundle_id.clone(),
         pid,
-    )?;
+    )
+    .await?;
     let (screen, ui_error) = if request.inspect_ui {
         match interaction::settle(&device.udid, &bound, None, 10_000).await {
             Ok(screen) => {
                 session::update(&mut bound, screen.clone(), None);
-                session::save(&bound)?;
+                session::save(&bound).await?;
                 (Some(screen), None)
             }
             Err(error) => (None, Some(error.to_string())),
@@ -266,8 +290,8 @@ pub struct RelaunchRequest {
 
 pub async fn relaunch(request: RelaunchRequest) -> Result<Value> {
     let started = Instant::now();
-    let previous = session::for_device(&request.device)?;
-    let _lock = session::lock(&previous.device)?;
+    let previous = session::for_device(&request.device).await?;
+    let _lock = session::lock(&previous.device).await?;
     let phase = Instant::now();
     let launched = sim::call(&[
         "launch",
@@ -291,12 +315,13 @@ pub async fn relaunch(request: RelaunchRequest) -> Result<Value> {
         previous.scheme,
         previous.bundle_id.clone(),
         pid,
-    )?;
+    )
+    .await?;
     let (screen, ui_error) = if request.inspect_ui {
         match interaction::settle(&previous.device, &bound, None, 10_000).await {
             Ok(screen) => {
                 session::update(&mut bound, screen.clone(), None);
-                session::save(&bound)?;
+                session::save(&bound).await?;
                 (Some(screen), None)
             }
             Err(error) => (None, Some(error.to_string())),
@@ -326,9 +351,9 @@ pub async fn booted_device(requested: &str) -> Result<sim::Device> {
 
 pub async fn stop(requested: &str, bundle_id: &str) -> Result<Value> {
     let device = booted_device(requested).await?;
-    let _lock = session::lock(&device.udid)?;
+    let _lock = session::lock(&device.udid).await?;
     if session::EXPECTED_SESSION.try_with(|_| ()).is_ok() {
-        let bound = session::active(&device.udid)?;
+        let bound = session::active(&device.udid).await?;
         anyhow::ensure!(
             bound.bundle_id == bundle_id,
             "Bundle ID does not belong to this session"
@@ -339,11 +364,11 @@ pub async fn stop(requested: &str, bundle_id: &str) -> Result<Value> {
         Err(error) if app_is_already_stopped(&error) => false,
         Err(error) => return Err(error),
     };
-    if let Ok(mut session) = session::for_device(&device.udid)
+    if let Ok(mut session) = session::for_device(&device.udid).await
         && session.bundle_id == bundle_id
     {
         session.active = false;
-        session::save(&session)?;
+        session::save(&session).await?;
     }
     Ok(json!({
         "device": device.udid,
@@ -409,18 +434,21 @@ pub async fn screenshot_device(device: &str, path: PathBuf) -> Result<Value> {
 
 pub async fn ui(requested: &str) -> Result<ui::Screen> {
     let device = booted_device(requested).await?;
-    let _lock = session::lock(&device.udid)?;
-    let mut bound = session::active(&device.udid)?;
+    let _lock = session::lock(&device.udid).await?;
+    let mut bound = session::active(&device.udid).await?;
     let screen = interaction::inspect_bound(&device.udid, &bound).await?;
     session::update(&mut bound, screen, None);
-    session::save(&bound)?;
-    bound.screen.context("UI snapshot was not saved")
+    session::save(&bound).await?;
+    bound
+        .screen
+        .map(Arc::unwrap_or_clone)
+        .context("UI snapshot was not saved")
 }
 
 pub async fn tap(requested: &str, selector: ui::Selector) -> Result<Value> {
     let device = booted_device(requested).await?;
-    let _lock = session::lock(&device.udid)?;
-    let bound = session::active(&device.udid)?;
+    let _lock = session::lock(&device.udid).await?;
+    let bound = session::active(&device.udid).await?;
     let screen = interaction::inspect_bound(&device.udid, &bound).await?;
     ui::tap_on_screen(&screen, selector).await?;
     Ok(json!({"device": device.udid, "tapped": true}))
@@ -428,8 +456,8 @@ pub async fn tap(requested: &str, selector: ui::Selector) -> Result<Value> {
 
 pub async fn type_text(requested: &str, text: &str) -> Result<Value> {
     let device = booted_device(requested).await?;
-    let _lock = session::lock(&device.udid)?;
-    let bound = session::active(&device.udid)?;
+    let _lock = session::lock(&device.udid).await?;
+    let bound = session::active(&device.udid).await?;
     interaction::inspect_bound(&device.udid, &bound).await?;
     ui::type_text(&device.udid, text).await?;
     Ok(json!({"device": device.udid, "typed_characters": text.chars().count()}))

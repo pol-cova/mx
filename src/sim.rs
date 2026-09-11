@@ -1,5 +1,5 @@
 use crate::process::{output, strings};
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -137,13 +137,11 @@ pub async fn capacity() -> Result<serde_json::Value> {
         .iter()
         .filter(|device| device.state == "Booted")
         .collect();
+    let table = crate::metrics::table().await?;
     let mut current_bytes = 0_u64;
     for device in &booted {
-        current_bytes = current_bytes.saturating_add(
-            crate::metrics::snapshot(&device.udid).await?["simulator_physical_bytes"]
-                .as_u64()
-                .context("Missing simulator footprint")?,
-        );
+        current_bytes =
+            current_bytes.saturating_add(crate::metrics::footprint_parts(&table, &device.udid)?);
     }
     let budget = default_memory_budget(true, None)?;
     let limit_bytes = budget.limit_mib.saturating_mul(1024 * 1024);
@@ -162,29 +160,27 @@ pub async fn capacity() -> Result<serde_json::Value> {
     }))
 }
 pub async fn boot_with_limit(device: &Device, max_booted: usize) -> Result<()> {
-    boot_with_budget(device, max_booted, None).await
+    let devices = list().await?;
+    boot_with_budget(device, max_booted, &devices, None).await
 }
 pub async fn boot_with_budget(
     device: &Device,
     max_booted: usize,
+    devices: &[Device],
     budget: Option<MemoryBudget>,
 ) -> Result<()> {
     if device.state != "Booted" {
-        let _admission = crate::session::lock("fleet-scheduler")?;
-        let devices = list().await?;
+        let _admission = crate::session::lock("fleet-scheduler").await?;
         anyhow::ensure!(
             devices.iter().filter(|d| d.state == "Booted").count() < max_booted,
             "Boot capacity reached; shut down an idle simulator first"
         );
         if let Some(budget) = budget {
+            let table = crate::metrics::table().await?;
             let mut current = 0_u64;
             for booted in devices.iter().filter(|d| d.state == "Booted") {
-                let measured = crate::metrics::snapshot(&booted.udid).await?;
-                current = current.saturating_add(
-                    measured["simulator_physical_bytes"]
-                        .as_u64()
-                        .context("Missing simulator footprint")?,
-                );
+                current =
+                    current.saturating_add(crate::metrics::footprint_parts(&table, &booted.udid)?);
             }
             budget.allows(current)?;
         }
