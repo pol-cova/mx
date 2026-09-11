@@ -441,16 +441,43 @@ pub async fn tap(requested: &str, selector: ui::Selector) -> Result<Value> {
     let device = booted_device(requested).await?;
     let _lock = session::lock(&device.udid).await?;
     let bound = session::active(&device.udid).await?;
-    let screen = interaction::inspect_bound(&device.udid, &bound).await?;
+    let screen = match cached_tap_screen(&bound, &selector) {
+        Some(screen) => screen,
+        None => {
+            let inspected = interaction::inspect_bound(&device.udid, &bound).await?;
+            let mut bound = bound;
+            session::update(&mut bound, inspected, None);
+            session::save(&bound).await?;
+            Arc::unwrap_or_clone(bound.screen.expect("UI snapshot was not saved"))
+        }
+    };
     ui::tap_on_screen(&screen, selector).await?;
     Ok(json!({"device": device.udid, "tapped": true}))
+}
+
+fn cached_tap_screen(session: &session::Session, selector: &ui::Selector) -> Option<ui::Screen> {
+    let screen = session.screen.as_ref()?;
+    session::check_foreground(session, screen).ok()?;
+    let matched: Vec<_> = screen
+        .elements
+        .iter()
+        .filter(|element| selector.matches(element))
+        .collect();
+    (matched.len() == 1 && (matched[0].frame.is_some() || crate::native::using_test_transport()))
+        .then(|| Arc::unwrap_or_clone(screen.clone()))
 }
 
 pub async fn type_text(requested: &str, text: &str) -> Result<Value> {
     let device = booted_device(requested).await?;
     let _lock = session::lock(&device.udid).await?;
     let bound = session::active(&device.udid).await?;
-    interaction::inspect_bound(&device.udid, &bound).await?;
+    let needs_inspect = bound
+        .screen
+        .as_ref()
+        .is_none_or(|screen| session::check_foreground(&bound, screen).is_err());
+    if needs_inspect {
+        interaction::inspect_bound(&device.udid, &bound).await?;
+    }
     ui::type_text(&device.udid, text).await?;
     Ok(json!({"device": device.udid, "typed_characters": text.chars().count()}))
 }
