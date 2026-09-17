@@ -16,6 +16,10 @@ pub fn guest_path() -> std::path::PathBuf {
     dyld::guest_install_path()
 }
 
+pub(crate) fn using_test_transport() -> bool {
+    stub::root().is_some()
+}
+
 pub fn doctor() -> Result<Value> {
     if stub::root().is_some() {
         return Ok(json!({
@@ -204,11 +208,7 @@ pub fn tap_on_screen_blocking(screen: &Screen, selector: Selector) -> Result<()>
         .find(|element| selector.matches(element));
     if stub::root().is_some() {
         stub::tap(&screen.device, &selector)
-    } else if let Err(press_error) = guest::press(&screen.device, screen.pid, &selector) {
-        let frame = matched.and_then(|element| element.frame);
-        let Some([x, y, width, height]) = frame else {
-            return Err(press_error);
-        };
+    } else if let Some([x, y, width, height]) = matched.and_then(|element| element.frame) {
         hid::tap(
             &screen.device,
             x + width / 2.0,
@@ -216,7 +216,8 @@ pub fn tap_on_screen_blocking(screen: &Screen, selector: Selector) -> Result<()>
             screen.width,
             screen.height,
         )
-        .context(press_error)
+    } else if let Err(press_error) = guest::press(&screen.device, screen.pid, &selector) {
+        Err(press_error)
     } else {
         Ok(())
     }

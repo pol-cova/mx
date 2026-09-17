@@ -1,6 +1,6 @@
 mod common;
 use common::Fixture;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::process::Stdio;
 
 #[test]
@@ -118,6 +118,57 @@ fn unique_tap_and_literal_text_are_forwarded_without_shell_parsing() {
     );
     assert!(fixture.calls().iter().any(|c| {
         c["args"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::String("--id=name".into()))
+    }));
+}
+
+#[test]
+fn tap_uses_cached_session_screen_without_inspect() {
+    let fixture = Fixture::new();
+    let session_path = fixture.dir.path().join("state/test-device.session.json");
+    let mut session: Value =
+        serde_json::from_slice(&std::fs::read(&session_path).unwrap()).unwrap();
+    session["revision"] = json!(1);
+    session["next_reference"] = json!(2);
+    session["screen"] = json!({
+        "device": "test-device",
+        "pid": 4321,
+        "width": 390.0,
+        "height": 844.0,
+        "hash": "cached",
+        "elements": [{
+            "role": "TextField",
+            "identifier": "name",
+            "label": "Name",
+            "index": 0,
+            "frame": [10.0, 20.0, 100.0, 30.0]
+        }]
+    });
+    std::fs::write(&session_path, serde_json::to_vec(&session).unwrap()).unwrap();
+    let result = fixture
+        .command()
+        .env("MX_TEST_BOOTED", "1")
+        .args(["tap", "--device", "test-device", "--id", "name"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let calls = fixture.calls();
+    assert!(
+        !calls.iter().any(|call| call["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg.as_str() == Some("inspect"))),
+        "{calls:?}"
+    );
+    assert!(calls.iter().any(|call| {
+        call["args"]
             .as_array()
             .unwrap()
             .contains(&Value::String("--id=name".into()))
@@ -692,7 +743,6 @@ fn fresh_device_creation_uses_requested_type_without_cloning_source_data() {
             .exists()
     );
 }
-
 
 #[test]
 fn training_disk_headroom_check_uses_the_real_filesystem() {
